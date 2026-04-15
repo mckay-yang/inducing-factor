@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inducing-factor"
+version = "0.1.0"
+description = "Engineering package for ecological disturbance inducing factor attribution"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "pyyaml",
+  "geopandas",
+  "rasterio",
+  "xarray",
+  "shapely",
+  "scikit-learn",
+  "pgmpy",
+  "joblib",
+  "netCDF4",
+  "scipy",
+]
+
+[project.scripts]
+inducing-factor = "inducing_factor.cli:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["inducing_factor*"]

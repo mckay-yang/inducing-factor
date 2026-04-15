@@ -1,0 +1,44 @@
+# [全域分析版本] 时空贝叶斯网络配置文件
+
+paths:
+  # 矢量边界
+  aoi_shp: "/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_pasighat/yarlung_zangbo_downstream_lang_to_pasighat.shp"
+  
+  # 本底环境栅格
+  dem_tif: "/Volumes/T9/Datasets/dem/yarlung_zangbo_downstream_dem.tif"
+  
+  # 人为活动矢量
+  road_shp: "/Volumes/T9/Datasets/road/2014-2024osm历史路网/gis_osm_roads_free_1.shp"
+  resident_shp: "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)/resident_sample.shp" # 请替换为实际shp
+  
+  # 目标变量
+  ccdc_dir: "/Volumes/T9/ccdc_res"
+  
+  # 动态气候数据目录
+  rainfall_dir: "/Volumes/T9/Datasets/rainfall"
+  temperature_dir: "/Volumes/T9/Datasets/temperature"
+  
+  # 输出目录 (因为全域生成的数据极大，建议放在有大容量的盘)
+  output_dir: "/Volumes/T9/output_model_full_extent"
+
+# 考察期设置
+time_series:
+  start_year: 2015
+  end_year: 2025
+  climatology_baseline_years: 5  
+
+# ====== 全域分块(Chunking)计算配置 ======
+# 由于全域(2.9万x3.8万)包含约 5.8 亿个像元，无法直接放入内存，必须使用分块处理
+processing:
+  chunk_size: 1024  # 每次读取 1024x1024 的瓦片 (tile)
+  # 是否仅在有森林(或有过扰动)的有效区域进行计算，以剔除无关像元（如雪山、水体）
+  # 默认 True: 只有在 CCDC 任意年份非 NaN 的像素，或者 DEM 有效的像素才会进入建模
+  mask_nodata: True 
+
+clustering:
+  method: "gmm"
+  n_clusters: 5  
+
+bayesian_network:
+  discretize_bins: 3
+  discretize_strategy: "quantile"

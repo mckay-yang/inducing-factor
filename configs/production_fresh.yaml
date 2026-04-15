@@ -1,0 +1,46 @@
+# Production configuration using a clean cache/output location.
+
+paths:
+  cache_dir: "/Volumes/T9/Datasets/.cache/chunks_aoi_v2"
+  out_dir: "/Volumes/T9/Datasets/.cache/patent_system_aoi_v2"
+
+pipeline:
+  start_year: 1990
+  end_year: 2020
+  chunk_size: 4096
+
+attribution:
+  lookback_years: 3
+  background_sample_rate: 0.05
+  discretizer_method: "supervised_tree"
+  discretize_bins: 3
+  max_pattern_size: 3
+  min_support: 0.05
+  min_relative_risk: 1.5
+  bootstrap_iterations: 10
+  min_stability: 0.6
+  max_bootstrap_samples: 3000
+  max_network_factors: 6
+  dominant_threshold: 0.55
+  synergy_threshold: 0.75
+  random_state: 42
+
+data_sources:
+  aoi_shp: "/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_paisighat_buffered_2km/LangToBasighat.shp"
+  dem_tif: "/Volumes/T9/Datasets/dem/tibet/tibet_dem.tif"
+  landuse_dir: "/Volumes/T9/Datasets/landuse/【立方数据学社】分省份的数据"
+  rainfall_dir: "/Volumes/T9/Datasets/rainfall/【立方数据学社】西藏自治区"
+  temperature_dir: "/Volumes/T9/Datasets/temperature"
+  resident_dir: "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)"
+  river_shp_dir: "/Volumes/T9/Datasets/river/Global_Chimaps_shp_Data_Record_A"
+  road_shp_dir: "/Volumes/T9/Datasets/road/2014-2024osm历史路网/2024/China_OSM_2024_3年路网"
+  ccdc_dir: "/Volumes/T9/ccdc_res"
+  disturbance_class_tif: "/Volumes/T9/Datasets/disturbance_class/disturbance_class_res.tif"
+  landuse_file_pattern: "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
+  rainfall_monthly_file_pattern: "pre{year}{month:02d}.tif"
+  temperature_file_pattern: "tmp_{year}.nc"
+  resident_file_pattern: "GURS_{year}.tif"
+  ccdc_file_pattern: "{year}.tif"
+  disturbance_class_start_year: 2016
+  dem_nodata: -9999.0
+  resident_nodata: 127.0

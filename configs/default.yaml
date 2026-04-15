@@ -1,0 +1,24 @@
+paths:
+  cache_dir: "/Volumes/T9/Datasets/.cache/chunks"
+  out_dir: "/Volumes/T9/Datasets/.cache/patent_system"
+
+pipeline:
+  start_year: 1990
+  end_year: 2020
+  chunk_size: 1024
+
+attribution:
+  lookback_years: 3
+  background_sample_rate: 0.05
+  discretizer_method: "supervised_tree"
+  discretize_bins: 3
+  max_pattern_size: 3
+  min_support: 0.05
+  min_relative_risk: 1.5
+  bootstrap_iterations: 10
+  min_stability: 0.6
+  max_bootstrap_samples: 3000
+  max_network_factors: 6
+  dominant_threshold: 0.55
+  synergy_threshold: 0.75
+  random_state: 42

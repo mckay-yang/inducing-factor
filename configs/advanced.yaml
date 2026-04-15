@@ -1,0 +1,28 @@
+# Full-extent analysis configuration.
+
+paths:
+  aoi_shp: "/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_pasighat/yarlung_zangbo_downstream_lang_to_pasighat.shp"
+  dem_tif: "/Volumes/T9/Datasets/dem/yarlung_zangbo_downstream_dem.tif"
+  road_shp: "/Volumes/T9/Datasets/road/2014-2024osm历史路网/gis_osm_roads_free_1.shp"
+  resident_shp: "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)/resident_sample.shp"
+  ccdc_dir: "/Volumes/T9/ccdc_res"
+  rainfall_dir: "/Volumes/T9/Datasets/rainfall"
+  temperature_dir: "/Volumes/T9/Datasets/temperature"
+  output_dir: "/Volumes/T9/output_model_full_extent"
+
+time_series:
+  start_year: 2015
+  end_year: 2025
+  climatology_baseline_years: 5
+
+processing:
+  chunk_size: 1024
+  mask_nodata: true
+
+clustering:
+  method: "gmm"
+  n_clusters: 5
+
+bayesian_network:
+  discretize_bins: 3
+  discretize_strategy: "quantile"

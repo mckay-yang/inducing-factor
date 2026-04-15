@@ -1,0 +1,24 @@
+paths:
+  cache_dir: "results/cache_real"
+  out_dir: "results/output_real"
+
+pipeline:
+  start_year: 2015
+  end_year: 2021
+  chunk_size: 512
+
+attribution:
+  lookback_years: 1
+  background_sample_rate: 0.5
+  discretizer_method: "supervised_tree"
+  discretize_bins: 3
+  max_pattern_size: 3
+  min_support: 0.05
+  min_relative_risk: 1.1
+  bootstrap_iterations: 5
+  min_stability: 0.4
+  max_bootstrap_samples: 1000
+  max_network_factors: 6
+  dominant_threshold: 0.55
+  synergy_threshold: 0.75
+  random_state: 42
