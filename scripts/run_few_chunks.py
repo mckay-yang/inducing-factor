@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("FewChunksPipeline")
 
 class FewChunksProcessor(PipelineProcessor):
-    def __init__(self, start_year=1990, end_year=2020, chunk_size=1024, cache_dir="/Volumes/T9/Datasets/.cache/chunks", max_chunks=5):
+    def __init__(self, start_year=1990, end_year=2020, chunk_size=1024, cache_dir="data/.cache/chunks", max_chunks=5):
         super().__init__(start_year, end_year, chunk_size, cache_dir)
         self.max_chunks = max_chunks
     

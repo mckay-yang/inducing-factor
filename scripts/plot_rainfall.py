@@ -24,4 +24,4 @@ def plot_rainfall(nc_file: str, output_img: str = "rainfall_plot.png"):
 
 
 if __name__ == "__main__":
-    plot_rainfall("/Volumes/T9/Datasets/rainfall/pre_2017.nc")
+    plot_rainfall("data/rainfall/pre_2017.nc")

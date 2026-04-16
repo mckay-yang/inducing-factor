@@ -3,7 +3,7 @@ import rasterio
 import numpy as np
 import sys
 
-tiff_path = "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)/GURS_2015.tif"
+tiff_path = "data/resident/GURS_2015.tif"
 try:
     with rasterio.open(tiff_path) as src:
         print(f"CRS: {src.crs}")

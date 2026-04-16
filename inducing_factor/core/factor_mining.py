@@ -44,6 +44,53 @@ class FactorMiner:
                     counts[combo] += 1
         return counts
 
+    def update_pattern_counts(self, label_df: pd.DataFrame, target: pd.Series, event_counts: Counter, background_counts: Counter) -> tuple[int, int]:
+        target_numeric = pd.to_numeric(target, errors="coerce").fillna(0).astype(int)
+        event_total = 0
+        background_total = 0
+        for idx, row in label_df.iterrows():
+            items = tuple(sorted(f"{feature}={row[feature]}" for feature in label_df.columns))
+            counts = event_counts if int(target_numeric.loc[idx]) == 1 else background_counts
+            if int(target_numeric.loc[idx]) == 1:
+                event_total += 1
+            else:
+                background_total += 1
+            max_len = min(self.max_pattern_size, len(items))
+            for size in range(1, max_len + 1):
+                for combo in itertools.combinations(items, size):
+                    counts[combo] += 1
+        return event_total, background_total
+
+    def mine_pattern_candidates_from_counts(
+        self,
+        event_counts: Counter,
+        background_counts: Counter,
+        n_event: int,
+        n_bg: int,
+    ) -> Dict[Tuple[str, ...], dict]:
+        if n_event <= 0:
+            raise ValueError("No disturbance transactions were provided for pattern mining")
+        min_event_count = max(1, math.ceil(self.min_support * n_event))
+        epsilon = 1e-6
+        candidates: Dict[Tuple[str, ...], dict] = {}
+        for pattern, count_event in event_counts.items():
+            if count_event < min_event_count:
+                continue
+            count_bg = background_counts.get(pattern, 0)
+            support_event = count_event / n_event
+            support_background = count_bg / max(n_bg, 1)
+            relative_risk = (support_event + epsilon) / (support_background + epsilon)
+            if relative_risk < self.min_relative_risk:
+                continue
+            candidates[pattern] = {
+                "count_event": count_event,
+                "count_background": count_bg,
+                "support_event": support_event,
+                "support_background": support_background,
+                "relative_risk": relative_risk,
+            }
+        return candidates
+
     def mine_pattern_candidates(
         self,
         event_transactions: Sequence[Tuple[str, ...]],

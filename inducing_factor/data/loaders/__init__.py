@@ -1,10 +1,17 @@
-from pathlib import Path
-import sys
+from .base import BaseLoader
+from .ccdc_loader import CCDCLoader
+from .dem_loader import DEMLoader
+from .disturbance_class_loader import DisturbanceClassLoader
+from .vector_loader import VectorLoader
+from .climate_loader import ClimateLoader
+from .landuse_loader import LandUseLoader
 
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
-from src.data_loader import BaseLoader, CCDCLoader, ClimateLoader, DEMLoader, DisturbanceClassLoader, LandUseLoader, VectorLoader
-
-__all__ = ["BaseLoader", "CCDCLoader", "ClimateLoader", "DEMLoader", "DisturbanceClassLoader", "LandUseLoader", "VectorLoader"]
+__all__ = [
+    "BaseLoader", 
+    "CCDCLoader", 
+    "DEMLoader", 
+    "DisturbanceClassLoader",
+    "VectorLoader",
+    "ClimateLoader",
+    "LandUseLoader"
+]

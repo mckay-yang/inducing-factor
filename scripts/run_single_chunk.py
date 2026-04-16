@@ -43,14 +43,14 @@ def main():
     cache_dir = "results/cache_real"
     os.makedirs(cache_dir, exist_ok=True)
     
-    dem_path = "/Volumes/T9/Datasets/dem/yarlung_zangbo_downstream_dem.tif"
-    road_path = "/Volumes/T9/Datasets/road/2014-2024osm历史路网/2024/China_OSM_2024_3年路网/gis_osm_roads_free_1.shp"
-    river_path = "/Volumes/T9/Datasets/river/yarlung_zangbo/雅鲁藏布江.shp"
-    rainfall_dir = "/Volumes/T9/Datasets/rainfall/【立方数据学社】西藏自治区"
-    temp_dir = "/Volumes/T9/Datasets/temperature"
-    landuse_dir = "/Volumes/T9/Datasets/landuse/【立方数据学社】分省份的数据"
-    resident_path = "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)/resident_sample.shp"
-    ccdc_dir = "/Volumes/T9/ccdc_res"
+    dem_path = "data/dem/tibet_dem.tif"
+    road_path = "data/road/osm_2014_roads.shp"
+    river_path = "data/river/As_15s_Chimaps.shp"
+    rainfall_dir = "data/rainfall"
+    temp_dir = "data/temperature"
+    landuse_dir = "data/landuse"
+    resident_path = "data/resident"
+    ccdc_dir = "data/ccdc_res"
     
     logger.info("Initializing loaders...")
     dem_loader = DEMLoader(dem_path)

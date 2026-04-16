@@ -2,50 +2,52 @@
 # All paths must intersect with AOI; vector data should be clipped to AOI bounding box.
 
 aoi:
-  shp: "/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_paisighat_buffered_2km/LangToBasighat.shp"
+  shp: "data/aoi/LangToBasighat.shp"
 
 dem:
-  tif: "/Volumes/T9/Datasets/dem/tibet/tibet_dem.tif"
+  tif: "data/dem/tibet_dem.tif"
   nodata: -9999
 
 landuse:
-  dir: "/Volumes/T9/Datasets/landuse/【立方数据学社】分省份的数据"
+  dir: "data/landuse"
   is_temporal: true
   file_pattern: "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
 
 rainfall:
-  dir: "/Volumes/T9/Datasets/rainfall/【立方数据学社】西藏自治区"
+  dir: "data/rainfall"
   monthly_file_pattern: "pre{year}{month:02d}.tif"
   # annual netcdf alternative (optional):
   # annual_file_pattern: "pre_{year}.nc"
   # variable: "pre"
 
 temperature:
-  dir: "/Volumes/T9/Datasets/temperature"
+  dir: "data/temperature"
   annual_file_pattern: "tmp_{year}.nc"
   variable: "tmp"
 
 resident:
-  dir: "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)"
+  dir: "data/resident"
   is_temporal: true
   file_pattern: "GURS_{year}.tif"
   nodata: 127.0
 
 river:
-  shp_dir: "/Volumes/T9/Datasets/river/Global_Chimaps_shp_Data_Record_A"
+  shp_dir: "data/river"
   # Use the Asia shapefile
   shp_file: "As_15s_Chimaps.shp"
 
 road:
-  shp_dir: "/Volumes/T9/Datasets/road/2014-2024osm历史路网/2024/China_OSM_2024_3年路网"
-  # The main road shapefile (assuming a single file per year)
-  shp_file: "gis_osm_roads_free_1.shp"
+  shp_dir: "data/road"
+  # Yearly road shapefile pattern (2014-2024)
+  road_file_pattern: "osm_{year}_roads.shp"
+  railway_file_pattern: "osm_{year}_railways.shp"
+  waterway_file_pattern: "osm_{year}_waterways.shp"
 
 ccdc:
-  dir: "/Volumes/T9/ccdc_res"
+  dir: "data/ccdc_res"
   file_pattern: "{year}.tif"
 
 # Processing cache and output directories (can be overridden in per-run configs)
 paths:
-  cache_dir: "/Volumes/T9/Datasets/.cache/chunks"
-  out_dir: "/Volumes/T9/Datasets/.cache/patent_system"
+  cache_dir: "data/.cache/chunks"
+  out_dir: "data/.cache/patent_system"

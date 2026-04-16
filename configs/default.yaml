@@ -1,6 +1,6 @@
 paths:
-  cache_dir: "/Volumes/T9/Datasets/.cache/chunks"
-  out_dir: "/Volumes/T9/Datasets/.cache/patent_system"
+  cache_dir: "data/.cache/chunks"
+  out_dir: "data/.cache/patent_system"
 
 pipeline:
   start_year: 1990

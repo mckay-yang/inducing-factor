@@ -1,46 +1,46 @@
 # Drivers Repository - Ecosystem Disturbance Attribution System
 
 ## Critical Constraints
-- **Data paths are hardcoded to `/Volumes/T9/Datasets/`** - local storage inaccessible to agents. Always use synthetic data or ask for alternative paths.
-- Requires `pgmpy` for full Bayesian network functionality; falls back to logistic regression if missing (see `src/inducing_factor_system.py:643-670`).
+- **Data paths are now relative to `data/` directory** (previously hardcoded to `/Volumes/T9/Datasets/`). Ensure the `data/` directory contains required datasets.
+- Requires `pgmpy` for full Bayesian network functionality; falls back to logistic regression if missing (see `inducing_factor/core/attribution_system.py`).
 - Full-extent processing (29k×38k pixels) uses 1024×1024 chunking to manage memory.
-- `test_loaders.py` requires actual data files at hardcoded paths and will fail without them. `test_inducing_factor_system.py` uses synthetic data and is the safe entry point.
+- `tests/integration/test_loaders_real_data.py` requires actual data files at hardcoded paths and will fail without them. `tests/integration/test_synthetic_pipeline.py` uses synthetic data and is the safe entry point.
 
 ## Development Commands
 ```bash
 # Run synthetic data test (safe for agents)
-python test_inducing_factor_system.py
+pytest tests/integration/test_synthetic_pipeline.py
 
-# Run loader tests (requires /Volumes/T9/Datasets/ access)
-python test_loaders.py
+# Run loader tests (requires data/ directory access)
+pytest tests/integration/test_loaders_real_data.py
 
 # Run core attribution system (requires cached data)
-python -c "from src.inducing_factor_system import EcoDisturbanceAttributionSystem; system = EcoDisturbanceAttributionSystem(); system.run()"
+python -m inducing_factor.cli run --config configs/quick_test.yaml
 
 # Run processing pipeline (requires data access)
-python src/pipeline.py
+python -m inducing_factor.cli pipeline --config configs/quick_multi.yaml
 ```
 
 ## Key Components
-- `src/data_loader/`: Unified loaders for DEM, vector, climate, land use, and CCDC disturbance data
-- `src/inducing_factor_system.py`: Core algorithm for inducing factor mining and Bayesian attribution
-- `src/pipeline.py`: Chunked processing pipeline (1024×1024 tiles)
-- `config_advanced.yaml`: Configuration for full-extent analysis (contains hardcoded paths)
+- `inducing_factor/data/loaders/`: Unified loaders for DEM, vector, climate, land use, and CCDC disturbance data
+- `inducing_factor/core/attribution_system.py`: Core algorithm for inducing factor mining and Bayesian attribution
+- `inducing_factor/pipeline/processor.py`: Chunked processing pipeline (1024×1024 tiles)
+- `configs/production_fresh.yaml`: Configuration for full-extent analysis (contains hardcoded paths)
 
 ## Environment & Dependencies
 - Conda environment `geo-science` (see `.env`). For agents, `pip install -r requirements.txt` is sufficient.
 - Key packages: `pgmpy` (Bayesian networks), `rasterio`, `geopandas`, `xarray`, `scikit-learn`
 
 ## Formal Data Sources
-- **AOI**: `/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_paisighat_buffered_2km/LangToBasighat.shp`
-- **DEM**: `/Volumes/T9/Datasets/dem/tibet/tibet_dem.tif`
-- **Land Use**: `/Volumes/T9/Datasets/landuse/【立方数据学社】分省份的数据`
-- **Rainfall**: `/Volumes/T9/Datasets/rainfall/【立方数据学社】西藏自治区` (monthly files `preYYYYMM.tif`)
-- **Resident**: `/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)`
-- **River**: `/Volumes/T9/Datasets/river/Global_Chimaps_shp_Data_Record_A` (use `As_15s_Chimaps.shp`)
-- **Road**: `/Volumes/T9/Datasets/road/2014-2024osm历史路网/2024/China_OSM_2024_3年路网`
-- **Temperature**: `/Volumes/T9/Datasets/temperature` (annual files `tmp_YYYY.nc`)
-- **CCDC**: `/Volumes/T9/ccdc_res` (annual files `YYYY.tif`)
+- **AOI**: `data/aoi/LangToBasighat.shp`
+- **DEM**: `data/dem/tibet_dem.tif`
+- **Land Use**: `data/landuse`
+- **Rainfall**: `data/rainfall` (monthly files `preYYYYMM.tif`)
+- **Resident**: `data/resident`
+- **River**: `data/river` (use `As_15s_Chimaps.shp`)
+- **Road**: `data/road` (yearly files `osm_{year}_roads.shp`, `osm_{year}_railways.shp`, `osm_{year}_waterways.shp`)
+- **Temperature**: `data/temperature` (annual files `tmp_YYYY.nc`)
+- **CCDC**: `data/ccdc_res` (annual files `YYYY.tif`)
 
 **Usage Rules**:
 1. Only use data that intersects with the AOI (both raster chunks and vector features).
@@ -53,7 +53,7 @@ python src/pipeline.py
 
 ## Verification Steps
 After changes:
-1. Run `python test_inducing_factor_system.py` to ensure core logic works
+1. Run `pytest tests/integration/test_synthetic_pipeline.py` to ensure core logic works
 2. Check for `pgmpy` import errors if modifying Bayesian networks
 3. Verify discretization logic in `AdaptiveDiscretizer` if changing feature engineering
 4. Ensure chunked processing maintains point_id uniqueness across chunks

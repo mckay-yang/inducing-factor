@@ -18,6 +18,8 @@ def build_synthetic_panel(random_state=42):
         aspect = rng.uniform(0, 360)
         dist_to_road = rng.uniform(200, 8000)
         dist_to_river = rng.uniform(100, 9000)
+        dist_to_railway = rng.uniform(500, 10000)
+        dist_to_waterway = rng.uniform(300, 7000)
         base_rain = rng.normal(4.5, 0.8)
         base_temp = rng.normal(11.0, 1.5)
         resident_level = rng.uniform(0, 2)
@@ -58,6 +60,8 @@ def build_synthetic_panel(random_state=42):
                     "aspect": aspect,
                     "dist_to_road": dist_to_road,
                     "dist_to_river": dist_to_river,
+                    "dist_to_railway": dist_to_railway,
+                    "dist_to_waterway": dist_to_waterway,
                     "temperature": temperature,
                     "resident": resident,
                     "landuse": landuse,

@@ -1,3 +1,4 @@
+import logging
 import os
 
 import numpy as np
@@ -6,6 +7,7 @@ from rasterio.windows import Window
 
 from inducing_factor.config.models import AppConfig
 from inducing_factor.core.attribution_system import EcoDisturbanceAttributionSystem
+from inducing_factor.utils.progress import ProgressTracker
 
 
 class AnnualProbabilityMapper:
@@ -50,10 +52,14 @@ class AnnualProbabilityMapper:
             ) as joint4_dst:
                 class_dsts = {1: class1_dst, 2: class2_dst, 3: class3_dst, 4: class4_dst}
                 joint_dsts = {1: joint1_dst, 2: joint2_dst, 3: joint3_dst, 4: joint4_dst}
-                for npz_path in self.system._iter_chunk_files():
+                chunk_files = list(self.system._iter_chunk_files())
+                progress = ProgressTracker(logging.getLogger("InducingFactorSystem"), "predict-annual-map", log_every=1)
+                progress.start_stage(1, 1, f"write maps for {year}", total=len(chunk_files))
+                for idx, npz_path in enumerate(chunk_files, start=1):
                     df_chunk = self.system._load_chunk_dataframe(npz_path)
                     df_year = df_chunk[df_chunk["year"] == year].copy()
                     if df_year.empty or "raster_row" not in df_year.columns or "raster_col" not in df_year.columns:
+                        progress.advance(1, {"chunk": idx, "written": 0})
                         continue
                     pred = self.system.predict_dataframe(df_year)
                     rows = pred["raster_row"].astype(int).to_numpy()
@@ -83,4 +89,6 @@ class AnnualProbabilityMapper:
                             joint_arr[rr, cc] = probs * pred["disturbance_probability"].astype(float).to_numpy()
                         class_dsts[cls].write(class_arr, 1, window=window)
                         joint_dsts[cls].write(joint_arr, 1, window=window)
+                    progress.advance(1, {"chunk": idx, "written": len(pred)})
+                progress.finish_stage({"outputs": len(outputs)})
         return outputs

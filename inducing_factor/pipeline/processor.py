@@ -4,6 +4,13 @@ import os
 from datetime import date, timedelta
 from typing import Optional
 
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
+
 import numpy as np
 import pandas as pd
 import rasterio
@@ -12,6 +19,7 @@ from rasterio.transform import rowcol
 from rasterio.windows import Window, transform as window_transform
 
 from inducing_factor.config.models import AppConfig
+from inducing_factor.utils.progress import ProgressTracker
 from inducing_factor.data.loaders import CCDCLoader, ClimateLoader, DEMLoader, DisturbanceClassLoader, LandUseLoader, VectorLoader
 
 logger = logging.getLogger("PipelineProcessor")
@@ -61,8 +69,14 @@ class PipelineProcessor:
         os.makedirs(self.cache_dir, exist_ok=True)
         ds = config.data_sources
         self.dem_loader = DEMLoader(ds.dem_tif)
-        self.road_loader = VectorLoader(os.path.join(ds.road_shp_dir, "gis_osm_roads_free_1.shp"))
+        self.road_shp_dir = ds.road_shp_dir
+        self.road_file_pattern = ds.road_file_pattern
+        self.railway_file_pattern = ds.railway_file_pattern
+        self.waterway_file_pattern = ds.waterway_file_pattern
         self.river_loader = VectorLoader(os.path.join(ds.river_shp_dir, "As_15s_Chimaps.shp"))
+        self.road_loaders_by_year = {}
+        self.railway_loaders_by_year = {}
+        self.waterway_loaders_by_year = {}
         self.rainfall_loader = ClimateLoader(ds.rainfall_dir)
         self.temp_loader = ClimateLoader(ds.temperature_dir, file_pattern=ds.temperature_file_pattern)
         self.landuse_loader = LandUseLoader(
@@ -177,27 +191,37 @@ class PipelineProcessor:
     def process_all_chunks(self):
         logger.info("Starting pipeline processing. Output cache: %s", self.cache_dir)
         if self.aoi is not None:
-            self.road_loader.set_aoi(self.aoi)
             self.river_loader.set_aoi(self.aoi)
-        self.road_loader.load()
         self.river_loader.load()
         with rasterio.open(self.dem_loader.file_path) as src_dem:
+            chunks = list(self._compute_chunks_intersecting_aoi(src_dem))
+            progress = ProgressTracker(logger, "pipeline", log_every=1)
+            progress.start_stage(1, 1, "process chunks", total=len(chunks))
             chunk_idx = 0
-            for window, row_off, col_off in self._compute_chunks_intersecting_aoi(src_dem):
-                self._process_single_chunk(
-                    window,
-                    src_dem.transform,
-                    chunk_idx,
-                    row_off,
-                    col_off,
-                    src_dem.crs,
-                    src_dem.transform,
-                    src_dem.width,
-                    src_dem.height,
-                )
+            for window, row_off, col_off in chunks:
+                if PSUTIL_AVAILABLE and chunk_idx % 10 == 0:
+                    mem = psutil.virtual_memory()
+                    logger.info(f"Memory usage: {mem.percent}% used ({mem.used / 1024**3:.1f} GB / {mem.total / 1024**3:.1f} GB)")
+                cache_file = os.path.join(self.cache_dir, f"chunk_{chunk_idx}.npz")
+                if os.path.exists(cache_file):
+                    logger.info(f"Skipping already processed chunk {chunk_idx}")
+                else:
+                    self._process_single_chunk(
+                        window,
+                        src_dem.transform,
+                        chunk_idx,
+                        row_off,
+                        col_off,
+                        src_dem.crs,
+                        src_dem.transform,
+                        src_dem.width,
+                        src_dem.height,
+                    )
                 if self.audit_records and len(self.audit_records) % 10 == 0:
                     self._save_audit_report()
+                progress.advance(1, {"saved": len(self.audit_records), "chunk_idx": chunk_idx})
                 chunk_idx += 1
+            progress.finish_stage({"saved": len(self.audit_records)})
         self._save_audit_report()
 
     def _process_single_chunk(self, window: Window, transform, chunk_idx: int, row_off: int, col_off: int, dem_crs, dem_transform, dem_width, dem_height):
@@ -221,7 +245,6 @@ class PipelineProcessor:
         x_coords, y_coords = rasterio.transform.xy(transform, rows + row_off, cols + col_off)
         x_coords = np.array(x_coords)
         y_coords = np.array(y_coords)
-        dist_road = self.road_loader.get_distance(x_coords, y_coords, dem_crs, max_dist=10000)
         dist_river = self.river_loader.get_distance(x_coords, y_coords, dem_crs, max_dist=10000)
         point_ids = np.arange(len(rows)) + (chunk_idx * 10_000_000)
         df_static = pd.DataFrame({
@@ -233,7 +256,6 @@ class PipelineProcessor:
             "elevation": dem_data[rows, cols],
             "slope": slope_data[rows, cols],
             "aspect": aspect_data[rows, cols],
-            "dist_to_road": dist_road,
             "dist_to_river": dist_river,
         })
         self.rainfall_loader.clear_state()
@@ -255,6 +277,39 @@ class PipelineProcessor:
                 df_year["resident"] = resident_vals
             else:
                 df_year["resident"] = 0
+            # Calculate road/railway/waterway distances for this year
+            if year not in self.road_loaders_by_year:
+                road_path = os.path.join(self.road_shp_dir, self.road_file_pattern.format(year=year))
+                if os.path.exists(road_path):
+                    loader = VectorLoader(road_path)
+                    loader.set_aoi(self.aoi)
+                    self.road_loaders_by_year[year] = loader
+                else:
+                    self.road_loaders_by_year[year] = None
+            if year not in self.railway_loaders_by_year:
+                railway_path = os.path.join(self.road_shp_dir, self.railway_file_pattern.format(year=year))
+                if os.path.exists(railway_path):
+                    loader = VectorLoader(railway_path)
+                    loader.set_aoi(self.aoi)
+                    self.railway_loaders_by_year[year] = loader
+                else:
+                    self.railway_loaders_by_year[year] = None
+            if year not in self.waterway_loaders_by_year:
+                waterway_path = os.path.join(self.road_shp_dir, self.waterway_file_pattern.format(year=year))
+                if os.path.exists(waterway_path):
+                    loader = VectorLoader(waterway_path)
+                    loader.set_aoi(self.aoi)
+                    self.waterway_loaders_by_year[year] = loader
+                else:
+                    self.waterway_loaders_by_year[year] = None
+            
+            dist_road = self.road_loaders_by_year[year].get_distance(x_coords, y_coords, dem_crs, max_dist=10000) if self.road_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
+            dist_railway = self.railway_loaders_by_year[year].get_distance(x_coords, y_coords, dem_crs, max_dist=10000) if self.railway_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
+            dist_waterway = self.waterway_loaders_by_year[year].get_distance(x_coords, y_coords, dem_crs, max_dist=10000) if self.waterway_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
+            
+            df_year["dist_to_road"] = dist_road
+            df_year["dist_to_railway"] = dist_railway
+            df_year["dist_to_waterway"] = dist_waterway
             for month in range(1, 13):
                 rain_data = self.rainfall_loader.load_month(year, month, dem_crs, dem_transform, dem_width, dem_height, window=window)
                 col = f"rainfall_month_{month:02d}"
@@ -303,7 +358,7 @@ class PipelineProcessor:
                     "height": int(window.height),
                     "valid_pixels": int(len(rows)),
                     "years": [self.start_year, self.end_year],
-                    "dist_to_road_non_null": int(np.isfinite(dist_road).sum()),
+                    "dist_to_road_non_null": int(pd.notna(df_chunk["dist_to_road"]).sum()),
                     "dist_to_river_non_null": int(np.isfinite(dist_river).sum()),
                     "resident_non_null": int(pd.notna(df_chunk["resident"]).sum()),
                     "rainfall_non_null": int(pd.notna(df_chunk.filter(like="rainfall_month_")).sum().sum()),

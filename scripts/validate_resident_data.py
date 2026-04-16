@@ -9,14 +9,14 @@ from shapely.geometry import box
 
 def main():
     # Paths
-    aoi_path = "/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_pasighat/yarlung_zangbo_downstream_lang_to_pasighat.shp"
-    resident_dir = "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)"
+    aoi_path = "data/aoi/LangToBasighat.shp"
+    resident_dir = "data/resident"
     
     # Check if files exist
     if not os.path.exists(aoi_path):
         print(f"AOI shapefile not found: {aoi_path}")
         # Try alternative spelling
-        aoi_path = "/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_paisighat_buffered_2km/LangToBasighat.shp"
+        aoi_path = "data/aoi/LangToBasighat.shp"
         if not os.path.exists(aoi_path):
             print(f"Alternative AOI also not found: {aoi_path}")
             return

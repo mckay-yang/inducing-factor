@@ -4,24 +4,27 @@ from typing import Optional
 
 @dataclass
 class PathsConfig:
-    cache_dir: str = "/Volumes/T9/Datasets/.cache/chunks"
-    out_dir: str = "/Volumes/T9/Datasets/.cache/patent_system"
+    cache_dir: str = "data/.cache/chunks"
+    out_dir: str = "data/.cache/patent_system"
 
 
 @dataclass
 class DataSourcesConfig:
-    aoi_shp: str = "/Volumes/T9/Datasets/aoi/yarlung_zangbo_downstream_lang_to_paisighat_buffered_2km/LangToBasighat.shp"
-    dem_tif: str = "/Volumes/T9/Datasets/dem/tibet/tibet_dem.tif"
-    landuse_dir: str = "/Volumes/T9/Datasets/landuse/【立方数据学社】分省份的数据"
-    rainfall_dir: str = "/Volumes/T9/Datasets/rainfall/【立方数据学社】西藏自治区"
-    temperature_dir: str = "/Volumes/T9/Datasets/temperature"
-    resident_dir: str = "/Volumes/T9/Datasets/resident/方创琳教授团队发布全球首套100 m城市和农村居住区数据集(2000-2020年)"
-    river_shp_dir: str = "/Volumes/T9/Datasets/river/Global_Chimaps_shp_Data_Record_A"
-    road_shp_dir: str = "/Volumes/T9/Datasets/road/2014-2024osm历史路网/2024/China_OSM_2024_3年路网"
-    ccdc_dir: str = "/Volumes/T9/ccdc_res"
-    disturbance_class_tif: str = "/Volumes/T9/Datasets/disturbance_class/disturbance_class_res.tif"
+    aoi_shp: str = "data/aoi/LangToBasighat.shp"
+    dem_tif: str = "data/dem/tibet_dem.tif"
+    landuse_dir: str = "data/landuse"
+    rainfall_dir: str = "data/rainfall"
+    temperature_dir: str = "data/temperature"
+    resident_dir: str = "data/resident"
+    river_shp_dir: str = "data/river"
+    road_shp_dir: str = "data/road"
+    ccdc_dir: str = "data/ccdc_res"
+    disturbance_class_tif: str = "data/disturbance_class/disturbance_class_res.tif"
     # Optional patterns
     landuse_file_pattern: str = "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
+    road_file_pattern: str = "osm_{year}_roads.shp"
+    railway_file_pattern: str = "osm_{year}_railways.shp"
+    waterway_file_pattern: str = "osm_{year}_waterways.shp"
     rainfall_monthly_file_pattern: str = "pre{year}{month:02d}.tif"
     temperature_file_pattern: str = "tmp_{year}.nc"
     resident_file_pattern: str = "GURS_{year}.tif"
@@ -55,6 +58,9 @@ class AttributionConfig:
     dominant_threshold: float = 0.55
     synergy_threshold: float = 0.75
     random_state: int = 42
+    discretizer_sample_limit: int = 200000
+    model_sample_limit: int = 200000
+    progress_log_every: int = 1
 
 
 @dataclass
