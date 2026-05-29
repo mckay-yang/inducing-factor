@@ -20,8 +20,9 @@ class FallbackOccurrenceModel:
 
 
 class OccurrenceProbabilityEngine:
-    def __init__(self, random_state: int = 42):
+    def __init__(self, random_state: int = 42, mode: str = "standalone"):
         self.random_state = random_state
+        self.mode = mode  # "standalone" or "calibration"
         self.model = None
         self.factor_columns: List[str] = []
 
@@ -35,10 +36,14 @@ class OccurrenceProbabilityEngine:
             factor_frame[factor.factor_id] = mask.astype(int)
         return factor_frame
 
-    def fit(self, label_df: pd.DataFrame, target: pd.Series, selected_factors: List[InducingFactor]):
+    def fit(self, label_df: pd.DataFrame, target: pd.Series, selected_factors: List[InducingFactor], bn_probs: np.ndarray = None):
         factor_frame = self._factor_activation_frame(label_df, selected_factors)
         self.factor_columns = factor_frame.columns.tolist()
         y = pd.to_numeric(target, errors="coerce").fillna(0).astype(int).to_numpy()
+        if self.mode == "calibration" and bn_probs is not None:
+            X = np.column_stack([factor_frame.to_numpy(), bn_probs.reshape(-1, 1)])
+        else:
+            X = factor_frame.to_numpy()
         if len(np.unique(y)) <= 1:
             self.model = FallbackOccurrenceModel(base_rate=float(np.mean(y)) if len(y) else 0.0)
             return self.model
@@ -52,10 +57,14 @@ class OccurrenceProbabilityEngine:
         self.model = model
         return model
 
-    def predict_proba(self, label_df: pd.DataFrame, selected_factors: List[InducingFactor]) -> np.ndarray:
+    def predict_proba(self, label_df: pd.DataFrame, selected_factors: List[InducingFactor], bn_probs: np.ndarray = None) -> np.ndarray:
         if self.model is None:
             return np.zeros((len(label_df), 2), dtype=float)
         factor_frame = self._factor_activation_frame(label_df, selected_factors)
+        if self.mode == "calibration" and bn_probs is not None:
+            X = np.column_stack([factor_frame.to_numpy(), bn_probs.reshape(-1, 1)])
+        else:
+            X = factor_frame.to_numpy()
         return self.model.predict_proba(factor_frame.to_numpy())
 
     def save(self, path: str):

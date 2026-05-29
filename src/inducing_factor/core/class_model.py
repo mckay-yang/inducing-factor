@@ -43,7 +43,7 @@ class DisturbanceClassEngine:
             factor_frame[factor.factor_id] = mask.astype(int)
         return factor_frame
 
-    def fit(self, label_df: pd.DataFrame, training_samples: pd.DataFrame, selected_factors: List[InducingFactor]):
+    def fit(self, label_df: pd.DataFrame, training_samples: pd.DataFrame, selected_factors: List[InducingFactor], continuous_features: pd.DataFrame = None):
         class_mask = pd.to_numeric(training_samples.get("disturbance_class"), errors="coerce").isin([1, 2, 3, 4])
         if not class_mask.any():
             self.model = None
@@ -51,7 +51,12 @@ class DisturbanceClassEngine:
             self.factor_columns = []
             return None
         factor_frame = self._factor_activation_frame(label_df.loc[class_mask], selected_factors)
-        self.factor_columns = factor_frame.columns.tolist()
+        if continuous_features is not None:
+            cont_masked = continuous_features.loc[class_mask]
+            feature_frame = pd.concat([factor_frame, cont_masked], axis=1)
+        else:
+            feature_frame = factor_frame
+        self.factor_columns = feature_frame.columns.tolist()
         y = pd.to_numeric(training_samples.loc[class_mask, "disturbance_class"], errors="coerce").astype(int).to_numpy()
         self.classes_ = np.unique(y)
         if len(self.classes_) <= 1:
@@ -64,7 +69,7 @@ class DisturbanceClassEngine:
             max_iter=1000,
             random_state=self.random_state,
         )
-        model.fit(factor_frame.to_numpy(), y)
+        model.fit(feature_frame.to_numpy(), y)
         self.model = model
         return self.model
 

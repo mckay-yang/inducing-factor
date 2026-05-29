@@ -1,13 +1,17 @@
 # Production configuration with formal data sources and AOI-driven processing.
 
 paths:
-  cache_dir: "data/.cache/chunks"
-  out_dir: "data/.cache/patent_system"
+  cache_dir: "cache/chunks"
+  out_dir: "results/models"
 
 pipeline:
   start_year: 1990  # will be adjusted by CCDC auto-discovery
   end_year: 2020
   chunk_size: 1024
+  num_workers: 0
+  max_auto_workers: 4
+  memory_target_fraction: 0.7
+  estimated_worker_gb: 3.0
 
 attribution:
   lookback_years: 3
@@ -24,6 +28,14 @@ attribution:
   dominant_threshold: 0.55
   synergy_threshold: 0.75
   random_state: 42
+  run_num_workers: 0
+  run_max_auto_workers: 4
+  run_memory_target_fraction: 0.7
+  run_estimated_worker_gb: 1.5
+  predict_num_workers: 0
+  predict_max_auto_workers: 4
+  predict_memory_target_fraction: 0.7
+  predict_estimated_worker_gb: 1.0
 
 data_sources:
   aoi_shp: "data/aoi/LangToBasighat.shp"

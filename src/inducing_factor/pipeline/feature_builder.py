@@ -28,6 +28,17 @@ class FeatureBuilder:
     def build_rainfall_window_features(self, df: pd.DataFrame) -> pd.DataFrame:
         if "reference_month" not in df.columns:
             return df
+        # Fill missing current-year rainfall data from previous year (shift(1))
+        for month in range(1, 13):
+            col = f"rainfall_month_{month:02d}"
+            if col not in df.columns:
+                continue
+            current_vals = pd.to_numeric(df[col], errors="coerce")
+            nan_mask = current_vals.isna()
+            if nan_mask.any():
+                prev_vals = self._previous_year_month(df, month)
+                df.loc[nan_mask, col] = prev_vals.loc[nan_mask]
+
         reference_month = pd.to_numeric(df["reference_month"], errors="coerce")
         month_values = {month: pd.to_numeric(df[f"rainfall_month_{month:02d}"], errors="coerce") for month in range(1, 13) if f"rainfall_month_{month:02d}" in df.columns}
         prev_year_values = {month: self._previous_year_month(df, month) for month in month_values}

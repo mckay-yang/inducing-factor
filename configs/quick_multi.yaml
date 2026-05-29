@@ -1,7 +1,7 @@
 # Quick multi-year test with limited chunks.
 paths:
-  cache_dir: "results/cache_multi"
-  out_dir: "results/output_multi"
+  cache_dir: "cache/chunks"
+  out_dir: "results/models"
 
 pipeline:
   start_year: 2016

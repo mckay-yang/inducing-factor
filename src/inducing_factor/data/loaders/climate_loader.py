@@ -1,4 +1,5 @@
 import os
+import threading
 import rasterio
 from rasterio.vrt import WarpedVRT
 from rasterio.io import MemoryFile
@@ -12,13 +13,13 @@ class ClimateLoader(BaseLoader):
     Temporal loader for climate data (Temperature, Rainfall).
     Handles missing years by implementing a backfill/forward-fill mechanism.
     Aligns dynamically to the DEM using WarpedVRT.
+    Thread-safe: per-thread state for backfill cache.
     """
     def __init__(self, dir_path: str, file_pattern: str = "{year}.tif", config: dict = None):
         super().__init__(dir_path, config)
         self.dir_path = dir_path
         self.file_pattern = file_pattern
-        self._last_valid_data = None 
-        self._last_valid_year = None
+        self._local = threading.local()
         self._nc_cache = {}
 
     def check_data(self, start_year: int, end_year: int):
@@ -93,19 +94,19 @@ class ClimateLoader(BaseLoader):
 
         if not os.path.exists(full_path):
             self.logger.warning(f"Climate data missing for year {year} at {full_path}.")
-            if self._last_valid_data is not None:
-                return self._last_valid_data
+            if self._local.last_valid_data is not None:
+                return self._local.last_valid_data
             return None
 
         try:
             data = self._read_aligned_window(full_path, dem_crs, dem_transform, dem_width, dem_height, window)
-            self._last_valid_data = data
-            self._last_valid_year = year
+            self._local.last_valid_data = data
+            self._local.last_valid_year = year
             return data
         except Exception as e:
             self.logger.error(f"Failed to read climate data {year} ({full_path}): {e}")
-            if self._last_valid_data is not None:
-                return self._last_valid_data
+            if self._local.last_valid_data is not None:
+                return self._local.last_valid_data
             return None
 
     def load_month(self, year: int, month: int, dem_crs, dem_transform, dem_width, dem_height, window: Window):
@@ -124,5 +125,5 @@ class ClimateLoader(BaseLoader):
             return None
 
     def clear_state(self):
-        self._last_valid_data = None
-        self._last_valid_year = None
+        self._local.last_valid_data = None
+        self._local.last_valid_year = None

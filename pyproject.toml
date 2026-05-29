@@ -29,5 +29,9 @@ inducing-factor = "inducing_factor.cli:main"
 [tool.setuptools]
 include-package-data = false
 
+[tool.setuptools.package-dir]
+"" = "src"
+
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["inducing_factor*"]

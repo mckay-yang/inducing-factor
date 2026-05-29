@@ -15,6 +15,16 @@ class InducingFactor:
     relative_risk: float
     stability: float
     score: float
+    count_event: int = 0
+    count_background: int = 0
+    n_event: int = 0
+    n_background: int = 0
+    rr_ci_lower: float = 0.0
+    rr_ci_upper: float = 0.0
+    p_value: float = 1.0
+    fdr_significant: bool = False
+    likelihood_ratio: float = 0.0
+    true_relative_risk: float = 0.0
 
 
 @dataclass

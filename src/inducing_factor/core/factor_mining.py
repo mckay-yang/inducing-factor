@@ -2,12 +2,14 @@ import itertools
 import math
 from collections import Counter
 from dataclasses import asdict
+from typing import Counter as CounterType
 from typing import Dict, List, Sequence, Tuple
 
 import pandas as pd
 
 from inducing_factor.core.models import InducingFactor
 from inducing_factor.core.semantics import pattern_name, pattern_semantics
+from inducing_factor.core.statistics import relative_risk_ci, benjamini_hochberg, true_relative_risk
 
 
 class FactorMiner:
@@ -20,6 +22,7 @@ class FactorMiner:
         bootstrap_iterations: int,
         max_bootstrap_samples: int,
         random_state: int,
+        score_method: str = "log_rr",
     ):
         self.max_pattern_size = max_pattern_size
         self.min_support = min_support
@@ -28,6 +31,7 @@ class FactorMiner:
         self.bootstrap_iterations = bootstrap_iterations
         self.max_bootstrap_samples = max_bootstrap_samples
         self.random_state = random_state
+        self.score_method = score_method
 
     def transactions_from_labels(self, label_df: pd.DataFrame) -> List[Tuple[str, ...]]:
         transactions = []
@@ -61,6 +65,50 @@ class FactorMiner:
                     counts[combo] += 1
         return event_total, background_total
 
+    def update_pattern_counts_by_class(
+        self,
+        label_df: pd.DataFrame,
+        target: pd.Series,
+        event_counts: Counter,
+        background_counts: Counter,
+        event_counts_by_class: Dict[int, Counter],
+        n_event_by_class: Dict[int, int],
+        class_values: pd.Series = None,
+        class_column: str = "disturbance_class",
+    ) -> tuple[int, int]:
+        target_numeric = pd.to_numeric(target, errors="coerce").fillna(0).astype(int)
+        event_total = 0
+        background_total = 0
+        has_class = class_values is not None and len(class_values) == len(target_numeric)
+        for idx, row in label_df.iterrows():
+            items = tuple(sorted(f"{feature}={row[feature]}" for feature in label_df.columns))
+            if int(target_numeric.loc[idx]) == 1:
+                event_total += 1
+                if has_class:
+                    cls_val = int(class_values.loc[idx]) if pd.notna(class_values.loc[idx]) else 0
+                elif class_column in row.index:
+                    try:
+                        cls_val = int(row[class_column])
+                    except (ValueError, TypeError):
+                        cls_val = 0
+                else:
+                    cls_val = 0
+                if cls_val > 0:
+                    class_counts = event_counts_by_class.setdefault(cls_val, Counter())
+                    n_event_by_class[cls_val] = n_event_by_class.get(cls_val, 0) + 1
+                    for size in range(1, min(self.max_pattern_size, len(items)) + 1):
+                        for combo in itertools.combinations(items, size):
+                            class_counts[combo] += 1
+                counts = event_counts
+            else:
+                background_total += 1
+                counts = background_counts
+            max_len = min(self.max_pattern_size, len(items))
+            for size in range(1, max_len + 1):
+                for combo in itertools.combinations(items, size):
+                    counts[combo] += 1
+        return event_total, background_total
+
     def mine_pattern_candidates_from_counts(
         self,
         event_counts: Counter,
@@ -82,12 +130,19 @@ class FactorMiner:
             relative_risk = (support_event + epsilon) / (support_background + epsilon)
             if relative_risk < self.min_relative_risk:
                 continue
+            n_bg_safe = max(n_bg, 1)
+            rr, ci_lo, ci_hi, p_val = relative_risk_ci(count_event, n_event, count_bg, n_bg_safe)
+            true_rr = true_relative_risk(count_event, count_bg, n_event, n_bg_safe)
             candidates[pattern] = {
                 "count_event": count_event,
                 "count_background": count_bg,
                 "support_event": support_event,
                 "support_background": support_background,
                 "relative_risk": relative_risk,
+                "p_value": p_val,
+                "rr_ci_lower": ci_lo,
+                "rr_ci_upper": ci_hi,
+                "true_relative_risk": true_rr,
             }
         return candidates
 
@@ -114,12 +169,18 @@ class FactorMiner:
             relative_risk = (support_event + epsilon) / (support_background + epsilon)
             if relative_risk < self.min_relative_risk:
                 continue
+            rr, ci_lo, ci_hi, p_val = relative_risk_ci(count_event, n_event, count_bg, n_bg)
+            true_rr = true_relative_risk(count_event, count_bg, n_event, n_bg)
             candidates[pattern] = {
                 "count_event": count_event,
                 "count_background": count_bg,
                 "support_event": support_event,
                 "support_background": support_background,
                 "relative_risk": relative_risk,
+                "p_value": p_val,
+                "rr_ci_lower": ci_lo,
+                "rr_ci_upper": ci_hi,
+                "true_relative_risk": true_rr,
             }
         return candidates
 
@@ -183,11 +244,18 @@ class FactorMiner:
                             break
         return {p: stats for p, stats in stable_patterns.items() if p not in to_remove}
 
-    def build_factor_library(self, reduced_patterns: Dict[Tuple[str, ...], dict]) -> List[InducingFactor]:
+    def build_factor_library(self, reduced_patterns: Dict[Tuple[str, ...], dict], n_event: int = 0, n_background: int = 0) -> List[InducingFactor]:
+        patterns_list = list(reduced_patterns.items())
+        p_values = [stats["p_value"] for _, stats in patterns_list]
+        fdr_results = benjamini_hochberg(p_values, alpha=0.05) if p_values else []
+
         library: List[InducingFactor] = []
-        for pattern, stats in reduced_patterns.items():
+        for idx, (pattern, stats) in enumerate(patterns_list):
             stability = stats["stability"]
-            score = stats["support_event"] * stats["relative_risk"] * stability
+            if self.score_method == "log_rr":
+                score = stats["support_event"] * math.log(stats["relative_risk"]) * stability
+            else:
+                score = stats["support_event"] * stats["relative_risk"] * stability
             library.append(
                 InducingFactor(
                     factor_id="",
@@ -199,6 +267,16 @@ class FactorMiner:
                     relative_risk=stats["relative_risk"],
                     stability=stability,
                     score=score,
+                    count_event=stats.get("count_event", 0),
+                    count_background=stats.get("count_background", 0),
+                    n_event=n_event,
+                    n_background=n_background,
+                    rr_ci_lower=stats.get("rr_ci_lower", 0.0),
+                    rr_ci_upper=stats.get("rr_ci_upper", 0.0),
+                    p_value=stats.get("p_value", 1.0),
+                    fdr_significant=fdr_results[idx] if idx < len(fdr_results) else False,
+                    likelihood_ratio=stats["relative_risk"],
+                    true_relative_risk=stats.get("true_relative_risk", 0.0),
                 )
             )
         library.sort(key=lambda item: item.score, reverse=True)

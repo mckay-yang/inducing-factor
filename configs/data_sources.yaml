@@ -49,5 +49,5 @@ ccdc:
 
 # Processing cache and output directories (can be overridden in per-run configs)
 paths:
-  cache_dir: "data/.cache/chunks"
-  out_dir: "data/.cache/patent_system"
+  cache_dir: "cache/chunks"
+  out_dir: "results/models"

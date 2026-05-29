@@ -1,7 +1,7 @@
 # Test attribution using existing cached chunks.
 paths:
-  cache_dir: "results/cache_real"
-  out_dir: "results/output_cache_test"
+  cache_dir: "cache/chunks"
+  out_dir: "results/models"
 
 pipeline:
   start_year: 2015

@@ -1,0 +1,75 @@
+# Production configuration using a clean cache/output location.
+
+paths:
+  cache_dir: "cache/chunks"
+  out_dir: "results/models"
+
+pipeline:
+  start_year: 2015
+  end_year: 2025
+  chunk_size: 1024
+  num_workers: 16
+  max_auto_workers: 16
+  memory_target_fraction: 0.7
+  estimated_worker_gb: 3.0
+
+attribution:
+  lookback_years: 3
+  background_sample_rate: 0.05
+  discretizer_method: "supervised_tree"  # "supervised_tree" or "mdlp"
+  discretize_bins: 5  # increased from 3 for finer resolution
+  max_pattern_size: 3
+  min_support: 0.05
+  min_relative_risk: 1.5
+  bootstrap_iterations: 100  # increased from 10 for reliable stability
+  min_stability: 0.6
+  max_bootstrap_samples: 3000
+  max_network_factors: 6
+  dominant_threshold: 0.55
+  synergy_threshold: 0.75
+  score_method: "log_rr"  # "original" or "log_rr"
+  spatial_buffer_distance: 0.0  # km, 0 = disabled
+  deduplicate_temporal: true  # keep only 1 year per background point_id
+  bn_bootstrap_iterations: 10
+  bn_edge_frequency_threshold: 0.5
+  bdeu_equivalent_sample_size: 10.0
+  redundancy_threshold: 0.1
+  random_state: 42
+  discretizer_sample_limit: 200000
+  model_sample_limit: 200000
+  progress_log_every: 1
+  run_num_workers: 4
+  run_max_auto_workers: 4
+  run_memory_target_fraction: 0.7
+  run_estimated_worker_gb: 1.5
+  predict_num_workers: 8
+  predict_max_auto_workers: 8
+  predict_memory_target_fraction: 0.7
+  predict_estimated_worker_gb: 1.0
+  analyze_by_class: true
+  min_count_per_class: 10
+  class_prior_lift_threshold: 2.0
+  top_n_per_class: 20
+
+data_sources:
+  aoi_shp: "data/aoi/LangToBasighat_clean.shp"
+  dem_tif: "data/dem/tibet_dem.tif"
+  landuse_dir: "data/landuse"
+  rainfall_dir: "data/rainfall"
+  temperature_dir: "data/temperature"
+  resident_dir: "data/resident"
+  river_shp_dir: "data/river"
+  road_shp_dir: "data/road"
+  ccdc_dir: "data/ccdc_res"
+  disturbance_class_tif: "data/disturbance_class/disturbance_class_res.tif"
+  landuse_file_pattern: "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
+  road_file_pattern: "osm_{year}_roads.shp"
+  railway_file_pattern: "osm_{year}_railways.shp"
+  waterway_file_pattern: "osm_{year}_waterways.shp"
+  rainfall_monthly_file_pattern: "pre{year}{month:02d}.tif"
+  temperature_file_pattern: "tmp_{year}.nc"
+  resident_file_pattern: "GURS_{year}.tif"
+  ccdc_file_pattern: "{year}.tif"
+  disturbance_class_start_year: 2016
+  dem_nodata: -9999.0
+  resident_nodata: 127.0

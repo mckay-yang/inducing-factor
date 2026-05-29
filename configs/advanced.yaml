@@ -8,7 +8,7 @@ paths:
   ccdc_dir: "data/ccdc_res"
   rainfall_dir: "data/rainfall"
   temperature_dir: "data/temperature"
-  output_dir: "data/.cache/output_model_full_extent"
+  output_dir: "results/models"
 
 time_series:
   start_year: 2015

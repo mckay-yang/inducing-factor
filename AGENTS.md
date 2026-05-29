@@ -2,7 +2,7 @@
 
 ## Critical Constraints
 - **Data paths are now relative to `data/` directory** (previously hardcoded to `/Volumes/T9/Datasets/`). Ensure the `data/` directory contains required datasets.
-- Requires `pgmpy` for full Bayesian network functionality; falls back to logistic regression if missing (see `inducing_factor/core/attribution_system.py`).
+- Requires `pgmpy` for full Bayesian network functionality; falls back to logistic regression if missing (see `src/inducing_factor/core/attribution_system.py`).
 - Full-extent processing (29k×38k pixels) uses 1024×1024 chunking to manage memory.
 - `tests/integration/test_loaders_real_data.py` requires actual data files at hardcoded paths and will fail without them. `tests/integration/test_synthetic_pipeline.py` uses synthetic data and is the safe entry point.
 
@@ -22,9 +22,9 @@ python -m inducing_factor.cli pipeline --config configs/quick_multi.yaml
 ```
 
 ## Key Components
-- `inducing_factor/data/loaders/`: Unified loaders for DEM, vector, climate, land use, and CCDC disturbance data
-- `inducing_factor/core/attribution_system.py`: Core algorithm for inducing factor mining and Bayesian attribution
-- `inducing_factor/pipeline/processor.py`: Chunked processing pipeline (1024×1024 tiles)
+- `src/inducing_factor/data/loaders/`: Unified loaders for DEM, vector, climate, land use, and CCDC disturbance data
+- `src/inducing_factor/core/attribution_system.py`: Core algorithm for inducing factor mining and Bayesian attribution
+- `src/inducing_factor/pipeline/processor.py`: Chunked processing pipeline (1024×1024 tiles)
 - `configs/production_fresh.yaml`: Configuration for full-extent analysis (contains hardcoded paths)
 
 ## Environment & Dependencies
@@ -41,6 +41,15 @@ python -m inducing_factor.cli pipeline --config configs/quick_multi.yaml
 - **Road**: `data/road` (yearly files `osm_{year}_roads.shp`, `osm_{year}_railways.shp`, `osm_{year}_waterways.shp`)
 - **Temperature**: `data/temperature` (annual files `tmp_YYYY.nc`)
 - **CCDC**: `data/ccdc_res` (annual files `YYYY.tif`)
+
+## Data Architecture
+```
+data/                   # input datasets only
+cache/chunks/           # chunk NPZ files
+results/models/         # model artifacts
+tmp/                    # temp scripts
+src/inducing_factor/    # Python source code
+```
 
 **Usage Rules**:
 1. Only use data that intersects with the AOI (both raster chunks and vector features).
