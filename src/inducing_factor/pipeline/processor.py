@@ -352,7 +352,7 @@ class PipelineProcessor:
         x_coords, y_coords = rasterio.transform.xy(self.dem_transform, rows + task.row_off, cols + task.col_off)
         x_coords = np.asarray(x_coords)
         y_coords = np.asarray(y_coords)
-        dist_river = self.river_loader.get_distance(x_coords, y_coords, self.dem_crs, max_dist=10000)
+        dist_river = self.river_loader.get_distance(x_coords, y_coords, self.dem_crs)
         point_ids = np.arange(len(rows)) + (task.chunk_idx * 10_000_000)
         df_static = pd.DataFrame(
             {
@@ -408,9 +408,9 @@ class PipelineProcessor:
                 else:
                     self.waterway_loaders_by_year[year] = None
 
-            dist_road = self.road_loaders_by_year[year].get_distance(x_coords, y_coords, self.dem_crs, max_dist=10000) if self.road_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
-            dist_railway = self.railway_loaders_by_year[year].get_distance(x_coords, y_coords, self.dem_crs, max_dist=10000) if self.railway_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
-            dist_waterway = self.waterway_loaders_by_year[year].get_distance(x_coords, y_coords, self.dem_crs, max_dist=10000) if self.waterway_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
+            dist_road = self.road_loaders_by_year[year].get_distance(x_coords, y_coords, self.dem_crs) if self.road_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
+            dist_railway = self.railway_loaders_by_year[year].get_distance(x_coords, y_coords, self.dem_crs) if self.railway_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
+            dist_waterway = self.waterway_loaders_by_year[year].get_distance(x_coords, y_coords, self.dem_crs) if self.waterway_loaders_by_year[year] is not None else np.full(len(x_coords), np.nan)
 
             df_year["dist_to_road"] = dist_road
             df_year["dist_to_railway"] = dist_railway

@@ -93,7 +93,7 @@ class VectorLoader(BaseLoader):
             self.transformers_to_metric[crs_key] = Transformer.from_crs(input_crs, self.metric_crs, always_xy=True)
         return self.transformers_to_metric[crs_key]
 
-    def get_distance(self, x_coords: np.ndarray, y_coords: np.ndarray, input_crs, max_dist=10000):
+    def get_distance(self, x_coords: np.ndarray, y_coords: np.ndarray, input_crs, max_dist=None):
         if self.tree is None:
             self.load()
 

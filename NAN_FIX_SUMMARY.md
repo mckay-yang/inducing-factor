@@ -8,7 +8,7 @@
 
 ## 根本原因
 `history_mask = df[required_cols].notna().all(axis=1)` 要求 **所有** 特征列都非 NaN。但动态特征（距离、温度、土地利用等）合法地存在 NaN：
-- 距离 > 10km（`max_dist=10000`）→ NaN
+- 距离 > 10km（`max_dist=10000`）→ NaN（⚠️ 此限制已在 2026-05-29 移除，现所有距离均可正常计算）
 - 居民数据 NoData（127）→ NaN  
 - Rolling lag（前3年无法计算）→ NaN
 

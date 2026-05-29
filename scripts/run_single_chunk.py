@@ -99,9 +99,9 @@ def main():
         y_coords = np.array(y_coords)
         
         logger.info("Calculating distances...")
-        dist_road = road_loader.get_distance(x_coords, y_coords, crs, max_dist=10000)
-        dist_river = river_loader.get_distance(x_coords, y_coords, crs, max_dist=10000)
-        dist_resident = resident_loader.get_distance(x_coords, y_coords, crs, max_dist=10000)
+        dist_road = road_loader.get_distance(x_coords, y_coords, crs)
+        dist_river = river_loader.get_distance(x_coords, y_coords, crs)
+        dist_resident = resident_loader.get_distance(x_coords, y_coords, crs)
         
         point_ids = np.arange(len(rows))
         df_static = pd.DataFrame({
