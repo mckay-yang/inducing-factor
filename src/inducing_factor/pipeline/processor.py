@@ -292,7 +292,7 @@ class PipelineProcessor:
         if self.aoi is not None:
             self.river_loader.set_aoi(self.aoi)
         self.river_loader.load()
-        self._preload_vector_data()
+        # self._preload_vector_data()  # Disabled: lazy loading in _process_single_chunk handles road data on demand
         with rasterio.open(self.dem_loader.file_path) as src_dem:
             tasks = self._build_chunk_tasks(src_dem)
 

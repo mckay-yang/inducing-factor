@@ -8,8 +8,8 @@ pipeline:
   start_year: 2015
   end_year: 2025
   chunk_size: 1024
-  num_workers: 16
-  max_auto_workers: 16
+  num_workers: 2
+  max_auto_workers: 2
   memory_target_fraction: 0.7
   estimated_worker_gb: 3.0
 
@@ -39,10 +39,10 @@ attribution:
   model_sample_limit: 200000
   progress_log_every: 1
   run_num_workers: 4
-  run_max_auto_workers: 4
+  run_max_auto_workers: 2
   run_memory_target_fraction: 0.7
   run_estimated_worker_gb: 1.5
-  predict_num_workers: 8
+  predict_num_workers: 2
   predict_max_auto_workers: 8
   predict_memory_target_fraction: 0.7
   predict_estimated_worker_gb: 1.0
