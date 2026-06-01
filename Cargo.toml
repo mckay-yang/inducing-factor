@@ -36,7 +36,7 @@ geo = "0.28"
 rstar = "0.12"
 
 # ── Data processing ──
-polars = { version = "0.45", features = ["lazy", "ndarray"] }
+polars = { version = "0.45", features = ["lazy", "ndarray", "parquet"] }
 rayon = "1.10"
 crossbeam = "0.8"
 

@@ -1,11 +1,29 @@
-//! Configuration model (paths, pipeline parameters, attribution
-//! hyper-parameters) deserialized from YAML/TOML via `serde` and
-//! the `config` crate.
+//! Configuration loading, typed deserialization, and validation for the
+//! inducing-factor pipeline.
+//!
+//! # Quick start
+//!
+//! ```no_run
+//! use if_config::AppConfig;
+//!
+//! let cfg = AppConfig::from_file("configs/example.yaml")?;
+//! let resolved = cfg.resolve_paths();
+//! # Ok::<(), if_config::ConfigError>(())
+//! ```
+//!
+//! # Path resolution
+//!
+//! Relative paths in [`PathsConfig`] and [`DataSourceConfig`] are resolved
+//! against the directory containing the config file when
+//! [`AppConfig::resolve_paths`] is called.  Absolute paths are left
+//! unchanged.  When [`PathsConfig::data_dir`] is set it overrides the
+//! config-file directory as the resolution base.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn smoke() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod config;
+pub mod validation;
+
+pub use config::{
+    AppConfig, AttributionConfig, ChunkConfig, DataSourceConfig, PathsConfig, PipelineConfig,
+    Workers,
+};
+pub use validation::ConfigError;
