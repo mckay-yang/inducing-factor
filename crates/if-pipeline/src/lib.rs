@@ -12,7 +12,10 @@ pub use processor::{
 };
 pub use feature_builder::FeatureBuilder;
 pub use sampling::StratifiedBackgroundSampler;
-pub use execution::{execute_chunk_tasks, execute_chunk_tasks_bounded};
+pub use execution::{
+    detect_available_ram_gb, detect_system_ram_gb, estimate_worker_memory_gb,
+    execute_chunk_tasks, execute_chunk_tasks_bounded, resolve_workers_with_memory_guard,
+};
 pub use probability_mapper::{
     AnnualProbabilityMapper, PredictionResult, RasterOutputMeta, CLASS_LABELS,
 };

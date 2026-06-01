@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use if_config::AppConfig;
+use if_config::{AppConfig, Workers};
 
 fn write_temp_yaml(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -46,7 +46,7 @@ data_sources:
 }
 
 #[test]
-fn zero_workers_rejected_in_full_config() {
+fn zero_workers_accepted_as_auto_in_full_config() {
     let yaml = r#"
 pipeline:
   workers: 0
@@ -60,13 +60,8 @@ data_sources:
   ccdc_dir: "data/ccdc_res"
 "#;
     let (_dir, config_path) = write_temp_yaml(yaml);
-    let err = AppConfig::from_file(&config_path).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("cannot be 0") || msg.contains("workers"),
-        "expected rejection of zero workers, got: {}",
-        msg
-    );
+    let cfg = AppConfig::from_file(&config_path).unwrap();
+    assert_eq!(cfg.pipeline.workers, Workers::Auto);
 }
 
 #[test]

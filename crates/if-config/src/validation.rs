@@ -81,6 +81,25 @@ fn validate_pipeline(p: &crate::config::PipelineConfig) -> Result<(), ConfigErro
         }
     }
 
+    if p.memory_fraction <= 0.0 || p.memory_fraction > 1.0 {
+        return Err(ConfigError::field(
+            "pipeline.memory_fraction",
+            format!(
+                "memory_fraction ({}) must be in (0, 1]",
+                p.memory_fraction
+            ),
+        ));
+    }
+
+    if let Some(gb) = p.estimated_worker_memory_gb {
+        if gb <= 0.0 {
+            return Err(ConfigError::field(
+                "pipeline.estimated_worker_memory_gb",
+                format!("estimated_worker_memory_gb ({}) must be positive when set", gb),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -350,5 +369,36 @@ mod tests {
         cfg.attribution.max_network_factors = 1;
         let err = validate(&cfg, None).unwrap_err();
         assert!(err.to_string().contains("attribution.max_network_factors"));
+    }
+
+    #[test]
+    fn memory_fraction_out_of_range_rejected() {
+        for val in &[-0.1, 0.0, 1.1, 2.0] {
+            let mut cfg = valid_appconfig();
+            cfg.pipeline.memory_fraction = *val;
+            let err = validate(&cfg, None).unwrap_err();
+            assert!(
+                err.to_string().contains("pipeline.memory_fraction"),
+                "expected memory_fraction error for {}, got: {}",
+                val,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn negative_memory_limit_rejected() {
+        let mut cfg = valid_appconfig();
+        cfg.pipeline.memory_limit_gb = Some(-5.0);
+        let err = validate(&cfg, None).unwrap_err();
+        assert!(err.to_string().contains("pipeline.memory_limit_gb"));
+    }
+
+    #[test]
+    fn negative_estimated_worker_memory_rejected() {
+        let mut cfg = valid_appconfig();
+        cfg.pipeline.estimated_worker_memory_gb = Some(-0.1);
+        let err = validate(&cfg, None).unwrap_err();
+        assert!(err.to_string().contains("estimated_worker_memory_gb"));
     }
 }

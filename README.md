@@ -110,10 +110,66 @@ Progress bars are displayed during chunk processing via `indicatif`.
 
 ## Performance Notes
 
-- **Worker count**: Defaults to all logical CPUs (`workers: "auto"`). Override with `--workers N` or config. Memory scales linearly with workers.
+- **Worker count**: Defaults to all logical CPUs (`workers: "auto"` or `workers: 0`). Override with `--workers N` or config. Memory scales linearly with workers.
 - **Chunk size**: Default 1024×1024 pixels. Larger chunks use more memory; smaller chunks increase overhead.
 - **Synthetic mode**: When no real data is available, the pipeline generates synthetic data for testing. This is the default behavior when cache directories are empty.
-- **Memory**: Full-extent processing (29k×38k pixels) uses 1024×1024 chunking to manage memory. Each chunk requires ~50-200MB depending on feature count.
+- **Memory**: Full-extent processing (29k×38k pixels) uses 1024×1024 chunking to manage memory. Each chunk requires ~0.3 GB for 1024×1024, ~2.5 GB for 4096×4096 per worker.
+- **Memory guardrail**: When `memory_limit_gb` is set, or system RAM is detected, workers are automatically reduced if the requested count would exceed available memory. Set `estimated_worker_memory_gb` to override auto-estimation.
+
+See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmarks, scaling charts, and known bottlenecks.
+
+## Production Runs
+
+### Real Data Testing
+
+Real-data loader tests are gated behind the `real-data` cargo feature and the `RUN_REAL_DATA_TESTS` environment variable:
+
+```bash
+RUN_REAL_DATA_TESTS=1 cargo test -p if-loaders --features real-data,gdal
+```
+
+Tests gracefully skip when data files are not found, allowing them to run in partial-data environments.
+
+### Memory Tuning
+
+| Config parameter | Purpose | Recommended |
+|---|---|---|
+| `pipeline.memory_limit_gb` | Hard cap on total pipeline RAM | 80% of system RAM |
+| `pipeline.memory_fraction` | Fraction of system RAM to use (default 0.7) | 0.6–0.8 |
+| `pipeline.estimated_worker_memory_gb` | Override per-worker estimate | Only if auto-estimate is wrong |
+| `chunks.tile_size` | Chunk dimensions in pixels | 1024 for most systems, 2048 for >64 GB |
+
+**Example production config excerpt:**
+
+```yaml
+pipeline:
+  workers: "auto"          # or 0 — auto-select based on CPU + memory
+  memory_limit_gb: 28      # hard limit for 32 GB system
+  memory_fraction: 0.7     # use ≤ 70% of available RAM
+  start_year: 2014
+  end_year: 2024
+
+chunks:
+  tile_size: 1024          # 1024×1024 per chunk
+```
+
+### Running Without Real Data
+
+Default tests never require real data. The full build:
+
+```bash
+cargo test --workspace     # 164 tests, 0 failures, no data/ required
+cargo build --release      # release binary
+```
+
+### Historical Issue: Python OOM at 16 Workers
+
+The Python pipeline OOM'd at 16 workers on a 24 GB system because each worker held a full pandas DataFrame copy. The Rust rewrite addresses this by:
+
+1. **Memory guardrail** — auto-reduces worker count when memory budget is exceeded
+2. **Zero-copy reads** — Polars/pyarrow columnar format avoids per-worker DataFrame duplication
+3. **Conservative estimation** — `estimate_worker_memory_gb` uses a 2.5× working-copy factor
+4. **Graceful degradation** — workers are capped, not killed; a warning is logged
 
 ## Crate Structure
 

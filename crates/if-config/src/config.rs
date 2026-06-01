@@ -60,22 +60,24 @@ impl<'de> Deserialize<'de> for Workers {
             }
 
             fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Workers, E> {
-                if v <= 0 {
-                    return Err(E::custom(format!(
-                        "workers cannot be {}; use \"auto\" or a positive integer",
+                if v == 0 {
+                    Ok(Workers::Auto)
+                } else if v < 0 {
+                    Err(E::custom(format!(
+                        "workers cannot be negative ({}); use 0, \"auto\", or a positive integer",
                         v
-                    )));
+                    )))
+                } else {
+                    Ok(Workers::Count(NonZeroUsize::new(v as usize).unwrap()))
                 }
-                Ok(Workers::Count(NonZeroUsize::new(v as usize).unwrap()))
             }
 
             fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Workers, E> {
                 if v == 0 {
-                    return Err(E::custom(
-                        "workers cannot be 0; use \"auto\" or a positive integer",
-                    ));
+                    Ok(Workers::Auto)
+                } else {
+                    Ok(Workers::Count(NonZeroUsize::new(v as usize).unwrap()))
                 }
-                Ok(Workers::Count(NonZeroUsize::new(v as usize).unwrap()))
             }
         }
 
@@ -165,6 +167,16 @@ pub struct PipelineConfig {
     #[serde(default)]
     pub memory_limit_gb: Option<f64>,
 
+    /// Fraction of system RAM the pipeline may use (0.0–1.0).
+    /// Used when `memory_limit_gb` is not set. Defaults to 0.7.
+    #[serde(default = "default_memory_fraction")]
+    pub memory_fraction: f64,
+
+    /// Estimated memory per worker in GiB (used for auto-scaling).
+    /// If not set, derived from chunk size.
+    #[serde(default)]
+    pub estimated_worker_memory_gb: Option<f64>,
+
     /// First year of the analysis window (inclusive).
     pub start_year: i32,
 
@@ -172,11 +184,17 @@ pub struct PipelineConfig {
     pub end_year: i32,
 }
 
+fn default_memory_fraction() -> f64 {
+    0.7
+}
+
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             workers: Workers::default(),
             memory_limit_gb: None,
+            memory_fraction: default_memory_fraction(),
+            estimated_worker_memory_gb: None,
             start_year: 2000,
             end_year: 2020,
         }
@@ -653,14 +671,9 @@ mod tests {
     }
 
     #[test]
-    fn workers_deserialize_zero_rejected() {
-        let err = serde_yaml::from_str::<Workers>("0").unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("cannot be 0"),
-            "expected rejection message, got: {}",
-            msg
-        );
+    fn workers_deserialize_zero_is_auto() {
+        let w: Workers = serde_yaml::from_str("0").unwrap();
+        assert_eq!(w, Workers::Auto);
     }
 
     #[test]

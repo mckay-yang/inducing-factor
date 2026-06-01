@@ -275,14 +275,35 @@ pub fn build_chunk_dataframe(
 }
 
 pub fn resolve_num_workers(config: &PipelineConfig) -> usize {
-    match &config.workers {
+    let raw = match &config.workers {
         Workers::Auto => {
             std::thread::available_parallelism()
                 .map(|n| n.get())
-                .unwrap_or(1)
+                .unwrap_or(4)
         }
         Workers::Count(n) => n.get(),
+    };
+
+    let est_gb = config
+        .estimated_worker_memory_gb
+        .unwrap_or_else(|| {
+            crate::execution::estimate_worker_memory_gb(1024, 1024)
+        });
+
+    let max_workers = raw.max(1);
+    let (effective, warning) = crate::execution::resolve_workers_with_memory_guard(
+        max_workers,
+        max_workers,
+        est_gb,
+        config.memory_limit_gb,
+        config.memory_fraction,
+    );
+
+    if let Some(w) = warning {
+        log::warn!("{}", w);
     }
+
+    effective
 }
 
 pub fn chunk_cache_path(cache_dir: &Path, chunk_idx: usize) -> PathBuf {

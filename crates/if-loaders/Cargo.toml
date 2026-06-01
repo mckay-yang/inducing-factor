@@ -9,6 +9,7 @@ authors.workspace = true
 default = []
 gdal = ["dep:gdal"]
 netcdf = ["dep:netcdf"]
+real-data = []
 
 [dependencies]
 geo.workspace = true
