@@ -1,0 +1,317 @@
+{
+  "slope": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      7.836488962173462,
+      22.457275390625,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "aspect": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      16.442506790161133,
+      335.5975646972656,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "dist_to_river": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      6672.599609375,
+      7200.646484375,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "rainfall_prev_1m": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      4.341639518737793,
+      5.771385431289673,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "rainfall_prev_2m": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      4.740603446960449,
+      6.767808198928833,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "rainfall_prev_3m": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      5.136148691177368,
+      7.247483968734741,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "rainfall_prev_total_3m": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      14.851552486419678,
+      16.197832107543945,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "temperature_prev_last": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      12.4876389503479,
+      13.604635238647461,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "temperature_prev_mean": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      11.158374786376953,
+      11.358842372894287,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "temperature_prev_max": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      11.009580612182617,
+      13.572982788085938,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "resident_prev_last": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      2.601265549659729,
+      2.9961167573928833,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "resident_prev_mean": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      2.071919560432434,
+      2.545461058616638,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "resident_prev_max": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      2.1744728088378906,
+      2.9961167573928833,
+      Infinity
+    ],
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "dist_to_road_prev_last": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      1159.1879272460938,
+      1446.0775756835938,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_road_prev_mean": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      644.5858764648438,
+      1030.2792053222656,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_road_prev_max": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      644.5858764648438,
+      1030.2792053222656,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_railway_prev_last": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      7373.4951171875,
+      8984.20068359375,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_railway_prev_mean": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      2913.457275390625,
+      9220.85009765625,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_railway_prev_max": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      2913.457275390625,
+      9220.85009765625,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_waterway_prev_last": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      1300.100341796875,
+      5770.712646484375,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_waterway_prev_mean": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      1604.9144897460938,
+      5770.712646484375,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "dist_to_waterway_prev_max": {
+    "kind": "continuous",
+    "bins": [
+      -Infinity,
+      1604.9144897460938,
+      5770.712646484375,
+      Infinity
+    ],
+    "labels": [
+      "near",
+      "mid",
+      "far"
+    ]
+  },
+  "landuse_prev_last": {
+    "kind": "categorical",
+    "categories": [
+      "1.0",
+      "2.0"
+    ]
+  }
+}

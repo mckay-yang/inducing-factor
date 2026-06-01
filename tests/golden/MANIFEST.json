@@ -1,0 +1,59 @@
+{
+  "source_commit": "f8953b2324700c30748c2a3c17b22420dab1c559",
+  "generation_command": "python scripts/generate_golden_fixtures.py",
+  "generated_at": "2026-06-01T14:39:35.521485+00:00",
+  "random_seed": 42,
+  "description": "Golden baseline corpus from the Python inducing_factor synthetic pipeline. All fixtures generated deterministically with seed=42. Used by Rust if-core, if-pipeline, and if-tests crates to verify behavior equivalence against the Python reference implementation.",
+  "tolerances": {
+    "discretization_labels": "exact",
+    "statistical_metrics": {
+      "absolute": 1e-06,
+      "relative": 0.0001
+    },
+    "factor_rankings": {
+      "spearman_min": 0.95
+    },
+    "occurrence_probabilities": {
+      "mae_max": 0.03,
+      "max_error": 0.1
+    },
+    "class_predictions": {
+      "top1_match_min": 0.95
+    },
+    "raster_metadata": "exact"
+  },
+  "pipeline_parameters": {
+    "lookback_years": 2,
+    "background_sample_rate": 0.3,
+    "max_pattern_size": 3,
+    "min_support": 0.08,
+    "min_relative_risk": 1.2,
+    "bootstrap_iterations": 5,
+    "min_stability": 0.4,
+    "max_bootstrap_samples": 1000,
+    "max_network_factors": 6,
+    "discretizer_method": "supervised_tree",
+    "discretize_bins": 3,
+    "random_state": 42
+  },
+  "files": {
+    "MANIFEST.json": ".worktrees/rust-rewrite/tests/golden/MANIFEST.json",
+    "README.md": ".worktrees/rust-rewrite/tests/golden/README.md",
+    "attribution_preview.parquet": ".worktrees/rust-rewrite/tests/golden/attribution_preview.parquet",
+    "bayesian_network_edges.json": ".worktrees/rust-rewrite/tests/golden/bayesian_network_edges.json",
+    "discretization_labels.json": ".worktrees/rust-rewrite/tests/golden/discretization_labels.json",
+    "edge_all_nodata.parquet": ".worktrees/rust-rewrite/tests/golden/edge_all_nodata.parquet",
+    "edge_empty_chunk.parquet": ".worktrees/rust-rewrite/tests/golden/edge_empty_chunk.parquet",
+    "edge_single_class.parquet": ".worktrees/rust-rewrite/tests/golden/edge_single_class.parquet",
+    "edge_single_row.parquet": ".worktrees/rust-rewrite/tests/golden/edge_single_row.parquet",
+    "factor_class_summary.parquet": ".worktrees/rust-rewrite/tests/golden/factor_class_summary.parquet",
+    "factor_library.json": ".worktrees/rust-rewrite/tests/golden/factor_library.json",
+    "model_metadata.json": ".worktrees/rust-rewrite/tests/golden/model_metadata.json",
+    "model_predictions.parquet": ".worktrees/rust-rewrite/tests/golden/model_predictions.parquet",
+    "selected_factors.json": ".worktrees/rust-rewrite/tests/golden/selected_factors.json",
+    "synthetic_panel_chunk_0.parquet": ".worktrees/rust-rewrite/tests/golden/synthetic_panel_chunk_0.parquet",
+    "synthetic_panel_chunk_1.parquet": ".worktrees/rust-rewrite/tests/golden/synthetic_panel_chunk_1.parquet",
+    "synthetic_panel_full.parquet": ".worktrees/rust-rewrite/tests/golden/synthetic_panel_full.parquet",
+    "training_samples.parquet": ".worktrees/rust-rewrite/tests/golden/training_samples.parquet"
+  }
+}
