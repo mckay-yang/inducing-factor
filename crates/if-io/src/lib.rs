@@ -1,11 +1,16 @@
 //! Artifact persistence: serialization/deserialization of trained
 //! models, discretizers, factor libraries, and metadata (JSON + binary
 //! formats).
+//!
+//! ## Modules
+//!
+//! - `artifacts`: typed containers (FactorLibrary, ModelMetadata, …) with
+//!   mandatory version/schema metadata.
+//! - `golden`: comparison utilities for verifying Rust outputs against
+//!   golden baseline fixtures.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn smoke() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod artifacts;
+pub mod golden;
+
+pub use artifacts::*;
+pub use golden::*;
