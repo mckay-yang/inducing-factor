@@ -201,14 +201,8 @@ mod serde_f64_vec {
         }
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<f64>, D::Error> {
-        d.deserialize_seq(F64VecVisitor)
-    }
-
     #[allow(dead_code)]
-    pub fn deserialize_opt<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<Option<Vec<f64>>, D::Error> {
+    pub fn deserialize_opt<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<f64>>, D::Error> {
         Ok(Some(d.deserialize_seq(F64VecVisitor)?))
     }
 }

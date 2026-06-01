@@ -64,12 +64,8 @@ pub const CLASS_LABELS: &[(i64, &str)] = &[
     (4, "road_construction"),
 ];
 
-const ABS_COL_SHORT: &[(i64, &str)] = &[
-    (1, "fire"),
-    (2, "logging"),
-    (3, "geo_hazard"),
-    (4, "road"),
-];
+const ABS_COL_SHORT: &[(i64, &str)] =
+    &[(1, "fire"), (2, "logging"), (3, "geo_hazard"), (4, "road")];
 
 // ── AnnualProbabilityMapper ────────────────────────────────────
 
@@ -88,13 +84,7 @@ pub struct AnnualProbabilityMapper {
 impl AnnualProbabilityMapper {
     pub fn new(config: AppConfig) -> Self {
         let lookback_years = config.attribution.lookback_years;
-        let fb = FeatureBuilder::new(
-            lookback_years,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
+        let fb = FeatureBuilder::new(lookback_years, vec![], vec![], vec![], vec![]);
         Self {
             config,
             discretizer: None,
@@ -119,8 +109,9 @@ impl AnnualProbabilityMapper {
         }
         let occ_path = out_dir.join("occurrence_probability_model.json");
         if occ_path.exists() {
-            let raw = fs::read_to_string(&occ_path)
-                .unwrap_or_else(|e| panic!("failed to read occurrence model at {:?}: {e}", occ_path));
+            let raw = fs::read_to_string(&occ_path).unwrap_or_else(|e| {
+                panic!("failed to read occurrence model at {:?}: {e}", occ_path)
+            });
             if let Ok(eng) = serde_json::from_str::<OccurrenceProbabilityEngine>(&raw) {
                 self.occurrence_engine = Some(eng);
             }
@@ -170,7 +161,7 @@ impl AnnualProbabilityMapper {
             .filter_map(|entry| {
                 let e = entry.ok()?;
                 let p = e.path();
-                if p.extension().map_or(false, |ext| ext == "parquet") {
+                if p.extension().is_some_and(|ext| ext == "parquet") {
                     Some(p)
                 } else {
                     None
@@ -181,11 +172,9 @@ impl AnnualProbabilityMapper {
         files
     }
 
-    pub fn predict_chunk(
-        &self,
-        chunk_df: &DataFrame,
-        year: i32,
-    ) -> Option<DataFrame> {
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn predict_chunk(&self, chunk_df: &DataFrame, year: i32) -> Option<DataFrame> {
         let lb = self.feature_builder.lookback_years;
         let year_series = chunk_df.column("year").ok()?.i64().ok()?;
         let mask: Vec<bool> = year_series
@@ -199,7 +188,9 @@ impl AnnualProbabilityMapper {
                 }
             })
             .collect();
-        let filtered = chunk_df.filter(&BooleanChunked::new("mask".into(), &mask)).ok()?;
+        let filtered = chunk_df
+            .filter(&BooleanChunked::new("mask".into(), &mask))
+            .ok()?;
         if filtered.height() == 0 {
             return None;
         }
@@ -215,19 +206,22 @@ impl AnnualProbabilityMapper {
         let year_col = samples.column("year").ok()?.i64().ok()?;
         let year_mask: Vec<bool> = year_col
             .into_iter()
-            .map(|v| v.map_or(false, |y| y == year as i64))
+            .map(|v| v.is_some_and(|y| y == year as i64))
             .collect();
-        let year_df = samples.filter(&BooleanChunked::new("ym".into(), &year_mask)).ok()?;
+        let year_df = samples
+            .filter(&BooleanChunked::new("ym".into(), &year_mask))
+            .ok()?;
         if year_df.height() == 0 {
             return None;
         }
-        let has_coords = year_df.column("raster_row").is_ok()
-            && year_df.column("raster_col").is_ok();
+        let has_coords =
+            year_df.column("raster_row").is_ok() && year_df.column("raster_col").is_ok();
         if !has_coords {
             return None;
         }
         let n_rows = year_df.height();
-        let mut feature_data: Vec<Vec<f64>> = vec![vec![f64::NAN; self.feature_columns.len()]; n_rows];
+        let mut feature_data: Vec<Vec<f64>> =
+            vec![vec![f64::NAN; self.feature_columns.len()]; n_rows];
         for (fi, feat) in self.feature_columns.iter().enumerate() {
             if let Ok(col) = year_df.column(feat) {
                 if let Ok(series) = col.as_materialized_series().f64() {
@@ -294,9 +288,7 @@ impl AnnualProbabilityMapper {
                 .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(c, _)| *c)
                 .unwrap_or(0);
-            let abs = |cls: i64| -> f64 {
-                cp_map.get(&cls).copied().unwrap_or(0.0) * occ
-            };
+            let abs = |cls: i64| -> f64 { cp_map.get(&cls).copied().unwrap_or(0.0) * occ };
             out_rows.push(PredictionRow {
                 point_id: pid_col.get(i).unwrap_or(0),
                 x: x_col.get(i).unwrap_or(0.0),
@@ -323,14 +315,16 @@ impl AnnualProbabilityMapper {
     pub fn resolve_predict_worker_count(&self) -> usize {
         use if_config::Workers;
         match &self.config.pipeline.workers {
-            Workers::Auto => {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(1)
-            }
+            Workers::Auto => std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1),
             Workers::Count(nz) => {
                 let n = nz.get();
-                n.min(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+                n.min(
+                    std::thread::available_parallelism()
+                        .map(|n| n.get())
+                        .unwrap_or(1),
+                )
             }
         }
     }
@@ -342,11 +336,9 @@ impl AnnualProbabilityMapper {
         dem_path: Option<PathBuf>,
         aoi_path: Option<PathBuf>,
     ) -> Result<HashMap<String, PathBuf>, String> {
-        let out_dir = output_dir.unwrap_or_else(|| {
-            self.config.paths.output_dir.join("probability_maps")
-        });
-        fs::create_dir_all(&out_dir)
-            .map_err(|e| format!("failed to create output dir: {e}"))?;
+        let out_dir =
+            output_dir.unwrap_or_else(|| self.config.paths.output_dir.join("probability_maps"));
+        fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {e}"))?;
         let meta = if let Some(ref dem) = dem_path {
             Self::raster_metadata_from_dem(dem, aoi_path.as_deref())?
         } else {
@@ -365,10 +357,7 @@ impl AnnualProbabilityMapper {
         }
         let mut abs_prob_paths: HashMap<i64, PathBuf> = HashMap::new();
         for (cls, short) in ABS_COL_SHORT {
-            abs_prob_paths.insert(
-                *cls,
-                out_dir.join(format!("prob_{short}_{year}.tif")),
-            );
+            abs_prob_paths.insert(*cls, out_dir.join(format!("prob_{short}_{year}.tif")));
         }
         let h = meta.height;
         let w = meta.width;
@@ -377,8 +366,14 @@ impl AnnualProbabilityMapper {
         let mut class_prob_rasters: HashMap<i64, Array2<f32>> = HashMap::new();
         let mut abs_prob_rasters: HashMap<i64, Array2<f32>> = HashMap::new();
         for (cls, _) in CLASS_LABELS {
-            class_prob_rasters.insert(*cls, Array2::from_elem((h, w), meta.nodata_probability as f32));
-            abs_prob_rasters.insert(*cls, Array2::from_elem((h, w), meta.nodata_probability as f32));
+            class_prob_rasters.insert(
+                *cls,
+                Array2::from_elem((h, w), meta.nodata_probability as f32),
+            );
+            abs_prob_rasters.insert(
+                *cls,
+                Array2::from_elem((h, w), meta.nodata_probability as f32),
+            );
         }
         if worker_count <= 1 || chunk_files.len() <= 1 {
             for (idx, npz_path) in chunk_files.iter().enumerate() {
@@ -420,7 +415,12 @@ impl AnnualProbabilityMapper {
                 }
             }
         }
-        write_geotiff_f32(&prob_path, &prob_raster, &meta, meta.nodata_probability as f32)?;
+        write_geotiff_f32(
+            &prob_path,
+            &prob_raster,
+            &meta,
+            meta.nodata_probability as f32,
+        )?;
         write_geotiff_i16(&class_path, &class_raster, &meta, meta.nodata_class)?;
         for (cls, path) in &class_prob_paths {
             if let Some(raster) = class_prob_rasters.get(cls) {
@@ -444,6 +444,7 @@ impl AnnualProbabilityMapper {
         Ok(outputs)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_chunk(
         &self,
         _chunk_idx: usize,
@@ -480,8 +481,7 @@ impl AnnualProbabilityMapper {
         aoi_path: Option<&Path>,
     ) -> Result<RasterOutputMeta, String> {
         use gdal::Dataset;
-        let ds = Dataset::open(dem_path)
-            .map_err(|e| format!("failed to open DEM: {e}"))?;
+        let ds = Dataset::open(dem_path).map_err(|e| format!("failed to open DEM: {e}"))?;
         let (width, height) = ds.raster_size();
         let geo_transform = ds
             .geo_transform()
@@ -532,20 +532,26 @@ fn write_predictions_to_buffers(
     }
     let rows = rr.unwrap();
     let cols = rc.unwrap();
-    let prob_col = df.column("disturbance_probability").ok().and_then(|c| c.as_materialized_series().f64().ok());
-    let class_col = df.column("dominant_disturbance_class").ok().and_then(|c| c.as_materialized_series().i64().ok());
+    let prob_col = df
+        .column("disturbance_probability")
+        .ok()
+        .and_then(|c| c.as_materialized_series().f64().ok());
+    let class_col = df
+        .column("dominant_disturbance_class")
+        .ok()
+        .and_then(|c| c.as_materialized_series().i64().ok());
     for i in 0..n {
         let r = rows.get(i).unwrap_or(-1) as usize;
         let c = cols.get(i).unwrap_or(-1) as usize;
         if r >= meta.height || c >= meta.width {
             continue;
         }
-        if let Some(ref pcol) = prob_col {
+        if let Some(pcol) = prob_col {
             if let Some(val) = pcol.get(i) {
                 prob_raster[[r, c]] = val as f32;
             }
         }
-        if let Some(ref ccol) = class_col {
+        if let Some(ccol) = class_col {
             if let Some(val) = ccol.get(i) {
                 class_raster[[r, c]] = val as i16;
             }
@@ -655,7 +661,6 @@ fn dataframe_from_rows(rows: &[PredictionRow]) -> PolarsResult<DataFrame> {
     ])
 }
 
-
 // ── GeoTIFF write helpers ──────────────────────────────────────
 
 /// Write a Float32 raster to GeoTIFF.
@@ -682,8 +687,7 @@ fn write_geotiff_f32(
             ds.set_projection(&meta.crs_wkt)
                 .map_err(|e| format!("set_projection: {e}"))?;
         }
-        let mut band = ds.rasterband(1)
-            .map_err(|e| format!("rasterband: {e}"))?;
+        let mut band = ds.rasterband(1).map_err(|e| format!("rasterband: {e}"))?;
         band.set_no_data_value(Some(nodata as f64))
             .map_err(|e| format!("set_no_data_value: {e}"))?;
         band.write((0, 0), (w, h), &data)
@@ -721,8 +725,7 @@ fn write_geotiff_i16(
             ds.set_projection(&meta.crs_wkt)
                 .map_err(|e| format!("set_projection: {e}"))?;
         }
-        let mut band = ds.rasterband(1)
-            .map_err(|e| format!("rasterband: {e}"))?;
+        let mut band = ds.rasterband(1).map_err(|e| format!("rasterband: {e}"))?;
         band.set_no_data_value(Some(nodata as f64))
             .map_err(|e| format!("set_no_data_value: {e}"))?;
         band.write((0, 0), (w, h), &data)
@@ -739,6 +742,7 @@ fn write_geotiff_i16(
 // ── Read a GeoTIFF as Array2<f32> (for testing) ───────────────
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn read_geotiff_f32(path: &Path) -> Result<Array2<f32>, String> {
     #[cfg(feature = "gdal")]
     {
@@ -761,6 +765,7 @@ fn read_geotiff_f32(path: &Path) -> Result<Array2<f32>, String> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn read_geotiff_i16(path: &Path) -> Result<Array2<i16>, String> {
     #[cfg(feature = "gdal")]
     {
@@ -783,13 +788,16 @@ fn read_geotiff_i16(path: &Path) -> Result<Array2<i16>, String> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn read_geotiff_metadata(path: &Path) -> Result<RasterOutputMeta, String> {
     #[cfg(feature = "gdal")]
     {
         use gdal::Dataset;
         let ds = Dataset::open(path).map_err(|e| format!("open: {e}"))?;
         let (w, h) = ds.raster_size();
-        let geo_transform = ds.geo_transform().map_err(|e| format!("geo_transform: {e}"))?;
+        let geo_transform = ds
+            .geo_transform()
+            .map_err(|e| format!("geo_transform: {e}"))?;
         let crs_wkt = ds.projection().unwrap_or_default();
         let band = ds.rasterband(1).map_err(|e| format!("band: {e}"))?;
         let nodata = band.no_data_value().unwrap_or(None);
@@ -812,14 +820,13 @@ fn read_geotiff_metadata(path: &Path) -> Result<RasterOutputMeta, String> {
 // ── Tests ──────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(unused_variables, clippy::too_many_arguments, clippy::cast_lossless)]
 mod tests {
     use super::*;
     use if_config::AppConfig;
     use if_core::discretize::AdaptiveDiscretizer;
     use if_core::types::{DiscretizerConfig, FeatureMeta, InducingFactor};
-    use polars::prelude::*;
     use std::collections::HashMap;
-    use std::io::Write;
     use tempfile::TempDir;
 
     // ── Helpers ──────────────────────────────────────────────
@@ -941,7 +948,12 @@ mod tests {
         labels.insert(3, "geo_hazard".to_string());
         labels.insert(4, "road_construction".to_string());
         DisturbanceClassEngine {
-            weights: vec![vec![0.2, 0.1], vec![-0.1, 0.3], vec![0.0, -0.2], vec![-0.1, -0.1]],
+            weights: vec![
+                vec![0.2, 0.1],
+                vec![-0.1, 0.3],
+                vec![0.0, -0.2],
+                vec![-0.1, -0.1],
+            ],
             intercepts: vec![0.1, -0.2, 0.0, 0.1],
             classes: vec![1, 2, 3, 4],
             factor_ids: vec!["IF_001".to_string(), "IF_002".to_string()],
@@ -1009,10 +1021,25 @@ mod tests {
         mapper.feature_columns = vec!["slope".to_string(), "dist_to_river".to_string()];
         mapper.feature_builder = FeatureBuilder::new(
             1, // lookback_years >= 1 required by feature builder
-            vec!["slope".to_string(), "aspect".to_string(), "dist_to_river".to_string()],
-            vec!["dist_to_road".to_string(), "dist_to_railway".to_string(), "dist_to_waterway".to_string(), "temperature".to_string(), "resident".to_string()],
+            vec![
+                "slope".to_string(),
+                "aspect".to_string(),
+                "dist_to_river".to_string(),
+            ],
+            vec![
+                "dist_to_road".to_string(),
+                "dist_to_railway".to_string(),
+                "dist_to_waterway".to_string(),
+                "temperature".to_string(),
+                "resident".to_string(),
+            ],
             vec!["landuse".to_string()],
-            vec!["rainfall_prev_1m".to_string(), "rainfall_prev_2m".to_string(), "rainfall_prev_3m".to_string(), "rainfall_prev_total_3m".to_string()],
+            vec![
+                "rainfall_prev_1m".to_string(),
+                "rainfall_prev_2m".to_string(),
+                "rainfall_prev_3m".to_string(),
+                "rainfall_prev_total_3m".to_string(),
+            ],
         );
         mapper
     }
@@ -1122,7 +1149,10 @@ mod tests {
             let read_back = read_geotiff_f32(&path).unwrap();
             let read_mask: Array2<bool> = read_back.mapv(|v| (v - (-9999.0f32)).abs() > 1e-3);
             let read_valid = read_mask.iter().filter(|&&v| v).count();
-            assert_eq!(read_valid, valid_count, "Valid pixel count should match after roundtrip");
+            assert_eq!(
+                read_valid, valid_count,
+                "Valid pixel count should match after roundtrip"
+            );
         }
     }
 
@@ -1189,12 +1219,12 @@ mod tests {
         let mapper = make_test_mapper(&cache_dir, &out_dir);
 
         // Predict on an empty DataFrame
-        let empty_df = DataFrame::new(vec![
-            Column::new("year".into(), Vec::<i64>::new()),
-        ])
-        .unwrap();
+        let empty_df = DataFrame::new(vec![Column::new("year".into(), Vec::<i64>::new())]).unwrap();
         let result = mapper.predict_chunk(&empty_df, 2020);
-        assert!(result.is_none(), "Empty chunk should produce no predictions");
+        assert!(
+            result.is_none(),
+            "Empty chunk should produce no predictions"
+        );
     }
 
     #[test]
@@ -1212,7 +1242,7 @@ mod tests {
         let chunks: Vec<DataFrame> = (0..4)
             .map(|ci| {
                 make_chunk_df(
-                    &[(ci * 100 + 1) as i64],
+                    &[(ci * 100 + 1)],
                     &[2020],
                     &[ci * 10 + 5],
                     &[ci * 10 + 5],
@@ -1259,21 +1289,24 @@ mod tests {
             &[2020, 2020, 2020],
             &[0, 5, 10],
             &[0, 5, 10],
-            &[10.0, 3.0, 20.0],   // slope
-            &[180.0, 180.0, 180.0], // aspect
+            &[10.0, 3.0, 20.0],       // slope
+            &[180.0, 180.0, 180.0],   // aspect
             &[500.0, 2000.0, 5000.0], // dist_to_river
-            &[2000.0; 3],  // dist_to_road
-            &[5000.0; 3],  // dist_to_railway
-            &[8000.0; 3],  // dist_to_waterway
-            &[20.0; 3],    // temperature
-            &[50.0; 3],    // resident
-            &[2; 3],       // landuse
-            &[0, 1, 0],    // dist_flag
-            &[0, 1, 0],    // dist_class
+            &[2000.0; 3],             // dist_to_road
+            &[5000.0; 3],             // dist_to_railway
+            &[8000.0; 3],             // dist_to_waterway
+            &[20.0; 3],               // temperature
+            &[50.0; 3],               // resident
+            &[2; 3],                  // landuse
+            &[0, 1, 0],               // dist_flag
+            &[0, 1, 0],               // dist_class
         );
 
         let result = mapper.predict_chunk(&df, 2020);
-        assert!(result.is_some(), "Should produce predictions for valid chunk");
+        assert!(
+            result.is_some(),
+            "Should produce predictions for valid chunk"
+        );
 
         let pred = result.unwrap();
         assert_eq!(pred.height(), 3, "Should have 3 rows");
@@ -1386,4 +1419,3 @@ mod tests {
         assert_eq!(mapper.feature_columns.len(), 2);
     }
 }
-

@@ -159,8 +159,8 @@ pub fn derive_chunk_grid(
     tile_size: u32,
 ) -> Vec<ChunkTask> {
     let tile = tile_size as usize;
-    let cols = (raster_width + tile - 1) / tile;
-    let rows = (raster_height + tile - 1) / tile;
+    let cols = (raster_width as u32).div_ceil(tile_size) as usize;
+    let rows = (raster_height as u32).div_ceil(tile_size) as usize;
     let mut tasks = Vec::with_capacity(rows * cols);
 
     for r in 0..rows {
@@ -182,6 +182,7 @@ pub fn derive_chunk_grid(
     tasks
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_chunk_dataframe(
     _task: &ChunkTask,
     points: &[(i64, f64, f64, i32)],
@@ -220,12 +221,11 @@ pub fn build_chunk_dataframe(
         ys.push(*y);
         years.push(*year);
 
-        let slope_v = features.get("slope").copied().unwrap_or(f64::NAN)
-            + rng.gen_range(-2.0..2.0);
+        let slope_v = features.get("slope").copied().unwrap_or(f64::NAN) + rng.gen_range(-2.0..2.0);
         slope_vals.push(slope_v);
 
-        let aspect_v = features.get("aspect").copied().unwrap_or(180.0)
-            + rng.gen_range(-30.0..30.0);
+        let aspect_v =
+            features.get("aspect").copied().unwrap_or(180.0) + rng.gen_range(-30.0..30.0);
         aspect_vals.push(aspect_v);
 
         dist_river.push(features.get("dist_to_river").copied().unwrap_or(5000.0));
@@ -233,8 +233,8 @@ pub fn build_chunk_dataframe(
         dist_railway.push(features.get("dist_to_railway").copied().unwrap_or(10000.0));
         dist_waterway.push(features.get("dist_to_waterway").copied().unwrap_or(8000.0));
 
-        temp_vals.push(features.get("temperature").copied().unwrap_or(15.0)
-            + rng.gen_range(-1.0..1.0));
+        temp_vals
+            .push(features.get("temperature").copied().unwrap_or(15.0) + rng.gen_range(-1.0..1.0));
         resident_vals.push(features.get("resident").copied().unwrap_or(100.0));
         landuse_vals.push(features.get("landuse").copied().unwrap_or(2.0) as i32);
 
@@ -243,27 +243,32 @@ pub fn build_chunk_dataframe(
         dist_classes.push(disturbance_classes.get(pid).copied().unwrap_or(0));
         dist_months.push(disturbance_months.get(pid).copied().unwrap_or(f64::NAN));
 
-        let r = rainfall_monthly.get(pid).cloned().unwrap_or(default_rainfall.clone());
+        let r = rainfall_monthly
+            .get(pid)
+            .cloned()
+            .unwrap_or(default_rainfall.clone());
         rainfall.push(r);
     }
 
-    let mut columns: Vec<Column> = Vec::new();
-    columns.push(Column::new("point_id".into(), point_ids));
-    columns.push(Column::new("x".into(), xs));
-    columns.push(Column::new("y".into(), ys));
-    columns.push(Column::new("year".into(), years));
-    columns.push(Column::new("slope".into(), slope_vals));
-    columns.push(Column::new("aspect".into(), aspect_vals));
-    columns.push(Column::new("dist_to_road".into(), dist_road));
-    columns.push(Column::new("dist_to_river".into(), dist_river));
-    columns.push(Column::new("dist_to_railway".into(), dist_railway));
-    columns.push(Column::new("dist_to_waterway".into(), dist_waterway));
-    columns.push(Column::new("temperature".into(), temp_vals));
-    columns.push(Column::new("resident".into(), resident_vals));
-    columns.push(Column::new("landuse".into(), landuse_vals));
-    columns.push(Column::new("disturbance_flag".into(), dist_flags));
-    columns.push(Column::new("disturbance_class".into(), dist_classes));
-    columns.push(Column::new("disturbance_month".into(), dist_months));
+    #[allow(clippy::vec_init_then_push)]
+    let mut columns: Vec<Column> = vec![
+        Column::new("point_id".into(), point_ids),
+        Column::new("x".into(), xs),
+        Column::new("y".into(), ys),
+        Column::new("year".into(), years),
+        Column::new("slope".into(), slope_vals),
+        Column::new("aspect".into(), aspect_vals),
+        Column::new("dist_to_road".into(), dist_road),
+        Column::new("dist_to_river".into(), dist_river),
+        Column::new("dist_to_railway".into(), dist_railway),
+        Column::new("dist_to_waterway".into(), dist_waterway),
+        Column::new("temperature".into(), temp_vals),
+        Column::new("resident".into(), resident_vals),
+        Column::new("landuse".into(), landuse_vals),
+        Column::new("disturbance_flag".into(), dist_flags),
+        Column::new("disturbance_class".into(), dist_classes),
+        Column::new("disturbance_month".into(), dist_months),
+    ];
 
     for m in 0..12 {
         let col_vals: Vec<f64> = rainfall.iter().map(|r| r[m]).collect();
@@ -276,19 +281,15 @@ pub fn build_chunk_dataframe(
 
 pub fn resolve_num_workers(config: &PipelineConfig) -> usize {
     let raw = match &config.workers {
-        Workers::Auto => {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-        }
+        Workers::Auto => std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4),
         Workers::Count(n) => n.get(),
     };
 
     let est_gb = config
         .estimated_worker_memory_gb
-        .unwrap_or_else(|| {
-            crate::execution::estimate_worker_memory_gb(1024, 1024)
-        });
+        .unwrap_or_else(|| crate::execution::estimate_worker_memory_gb(1024, 1024));
 
     let max_workers = raw.max(1);
     let (effective, warning) = crate::execution::resolve_workers_with_memory_guard(
@@ -330,9 +331,8 @@ pub fn write_chunk_cache(df: &mut DataFrame, path: &Path) -> PolarsResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).ok();
     }
-    let mut file = fs::File::create(path).map_err(|e| {
-        PolarsError::ComputeError(format!("Cannot create cache file: {e}").into())
-    })?;
+    let mut file = fs::File::create(path)
+        .map_err(|e| PolarsError::ComputeError(format!("Cannot create cache file: {e}").into()))?;
     ParquetWriter::new(&mut file).finish(df)?;
     Ok(())
 }
@@ -386,9 +386,8 @@ mod tests {
 
     #[test]
     fn test_point_id_uniqueness() {
-        let points_chunk0: Vec<(i64, f64, f64, i32)> = (0..50)
-            .map(|i| (i, i as f64 * 10.0, 29.0, 2020))
-            .collect();
+        let points_chunk0: Vec<(i64, f64, f64, i32)> =
+            (0..50).map(|i| (i, i as f64 * 10.0, 29.0, 2020)).collect();
         let points_chunk1: Vec<(i64, f64, f64, i32)> = (50..100)
             .map(|i| (i, i as f64 * 10.0, 29.0, 2020))
             .collect();
@@ -397,26 +396,65 @@ mod tests {
         features.insert("slope".to_string(), 10.0);
 
         let df0 = build_chunk_dataframe(
-            &ChunkTask { chunk_idx: 0, row_off: 0, col_off: 0, width: 100, height: 100 },
-            &points_chunk0, &features,
-            &HashMap::new(), &HashMap::new(), &HashMap::new(), &HashMap::new(), 42,
-        ).unwrap();
+            &ChunkTask {
+                chunk_idx: 0,
+                row_off: 0,
+                col_off: 0,
+                width: 100,
+                height: 100,
+            },
+            &points_chunk0,
+            &features,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            42,
+        )
+        .unwrap();
 
         let df1 = build_chunk_dataframe(
-            &ChunkTask { chunk_idx: 1, row_off: 0, col_off: 100, width: 100, height: 100 },
-            &points_chunk1, &features,
-            &HashMap::new(), &HashMap::new(), &HashMap::new(), &HashMap::new(), 42,
-        ).unwrap();
+            &ChunkTask {
+                chunk_idx: 1,
+                row_off: 0,
+                col_off: 100,
+                width: 100,
+                height: 100,
+            },
+            &points_chunk1,
+            &features,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            42,
+        )
+        .unwrap();
 
-        let ids0: HashSet<i64> = df0.column("point_id").unwrap()
-            .as_materialized_series().i64().unwrap()
-            .into_iter().filter_map(|v| v).collect();
-        let ids1: HashSet<i64> = df1.column("point_id").unwrap()
-            .as_materialized_series().i64().unwrap()
-            .into_iter().filter_map(|v| v).collect();
+        let ids0: HashSet<i64> = df0
+            .column("point_id")
+            .unwrap()
+            .as_materialized_series()
+            .i64()
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        let ids1: HashSet<i64> = df1
+            .column("point_id")
+            .unwrap()
+            .as_materialized_series()
+            .i64()
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
 
         let intersection: HashSet<_> = ids0.intersection(&ids1).collect();
-        assert!(intersection.is_empty(), "Point IDs must be unique across chunks");
+        assert!(
+            intersection.is_empty(),
+            "Point IDs must be unique across chunks"
+        );
     }
 
     #[test]
@@ -424,10 +462,22 @@ mod tests {
         let points: Vec<(i64, f64, f64, i32)> = vec![];
         let features = HashMap::new();
         let df = build_chunk_dataframe(
-            &ChunkTask { chunk_idx: 0, row_off: 0, col_off: 0, width: 10, height: 10 },
-            &points, &features,
-            &HashMap::new(), &HashMap::new(), &HashMap::new(), &HashMap::new(), 42,
-        ).unwrap();
+            &ChunkTask {
+                chunk_idx: 0,
+                row_off: 0,
+                col_off: 0,
+                width: 10,
+                height: 10,
+            },
+            &points,
+            &features,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            42,
+        )
+        .unwrap();
 
         let has_data = chunk_has_valid_data(&df);
         assert!(!has_data || df.height() == 0);

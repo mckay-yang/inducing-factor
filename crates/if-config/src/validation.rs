@@ -84,10 +84,7 @@ fn validate_pipeline(p: &crate::config::PipelineConfig) -> Result<(), ConfigErro
     if p.memory_fraction <= 0.0 || p.memory_fraction > 1.0 {
         return Err(ConfigError::field(
             "pipeline.memory_fraction",
-            format!(
-                "memory_fraction ({}) must be in (0, 1]",
-                p.memory_fraction
-            ),
+            format!("memory_fraction ({}) must be in (0, 1]", p.memory_fraction),
         ));
     }
 
@@ -95,7 +92,10 @@ fn validate_pipeline(p: &crate::config::PipelineConfig) -> Result<(), ConfigErro
         if gb <= 0.0 {
             return Err(ConfigError::field(
                 "pipeline.estimated_worker_memory_gb",
-                format!("estimated_worker_memory_gb ({}) must be positive when set", gb),
+                format!(
+                    "estimated_worker_memory_gb ({}) must be positive when set",
+                    gb
+                ),
             ));
         }
     }

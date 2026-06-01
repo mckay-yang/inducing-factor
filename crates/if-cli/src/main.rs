@@ -107,13 +107,21 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Pipeline { config, workers, dry_run } => {
+        Commands::Pipeline {
+            config,
+            workers,
+            dry_run,
+        } => {
             commands::run_pipeline(&config, workers, dry_run);
         }
         Commands::Train { config, output_dir } => {
             commands::run_train(&config, output_dir.as_deref());
         }
-        Commands::Predict { config, year, workers } => {
+        Commands::Predict {
+            config,
+            year,
+            workers,
+        } => {
             commands::run_predict(&config, year, workers);
         }
         Commands::All { config, dry_run } => {
@@ -132,9 +140,18 @@ mod tests {
         let mut cli = Cli::command();
         let help = cli.render_long_help().to_string();
 
-        assert!(help.contains("pipeline"), "Help should mention 'pipeline' command");
-        assert!(help.contains("train"), "Help should mention 'train' command");
-        assert!(help.contains("predict"), "Help should mention 'predict' command");
+        assert!(
+            help.contains("pipeline"),
+            "Help should mention 'pipeline' command"
+        );
+        assert!(
+            help.contains("train"),
+            "Help should mention 'train' command"
+        );
+        assert!(
+            help.contains("predict"),
+            "Help should mention 'predict' command"
+        );
         assert!(help.contains("all"), "Help should mention 'all' command");
     }
 
@@ -143,17 +160,22 @@ mod tests {
         // Verify that --dry-run is a recognized flag
         let cli = Cli::command();
         let matches = cli.try_get_matches_from(vec![
-            "if-cli", "pipeline", "--config", "configs/example.yaml", "--dry-run",
+            "if-cli",
+            "pipeline",
+            "--config",
+            "configs/example.yaml",
+            "--dry-run",
         ]);
-        assert!(matches.is_ok(), "Pipeline with --dry-run should parse successfully");
+        assert!(
+            matches.is_ok(),
+            "Pipeline with --dry-run should parse successfully"
+        );
     }
 
     #[test]
     fn test_cli_missing_config() {
         let cli = Cli::command();
-        let result = cli.try_get_matches_from(vec![
-            "if-cli", "pipeline",
-        ]);
+        let result = cli.try_get_matches_from(vec!["if-cli", "pipeline"]);
         assert!(result.is_err(), "Missing --config should produce an error");
     }
 
@@ -161,17 +183,33 @@ mod tests {
     fn test_cli_worker_override() {
         let cli = Cli::command();
         let result = cli.try_get_matches_from(vec![
-            "if-cli", "pipeline", "--config", "configs/example.yaml", "--workers", "8",
+            "if-cli",
+            "pipeline",
+            "--config",
+            "configs/example.yaml",
+            "--workers",
+            "8",
         ]);
-        assert!(result.is_ok(), "Pipeline with --workers should parse successfully");
+        assert!(
+            result.is_ok(),
+            "Pipeline with --workers should parse successfully"
+        );
     }
 
     #[test]
     fn test_cli_predict_with_year() {
         let cli = Cli::command();
         let matches = cli.try_get_matches_from(vec![
-            "if-cli", "predict", "--config", "configs/example.yaml", "--year", "2020",
+            "if-cli",
+            "predict",
+            "--config",
+            "configs/example.yaml",
+            "--year",
+            "2020",
         ]);
-        assert!(matches.is_ok(), "Predict with --year should parse successfully");
+        assert!(
+            matches.is_ok(),
+            "Predict with --year should parse successfully"
+        );
     }
 }

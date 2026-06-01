@@ -17,10 +17,7 @@ impl DEMLoader {
         let ds = Dataset::open(path)?;
         let geo_transform = ds.geo_transform()?;
         let band = ds.rasterband(1)?;
-        let nodata = band
-            .no_data_value()
-            .map(|v| v as f32)
-            .unwrap_or(DEM_NODATA);
+        let nodata = band.no_data_value().map(|v| v as f32).unwrap_or(DEM_NODATA);
 
         Ok(Self {
             path: path.to_string(),
@@ -61,11 +58,7 @@ impl DEMLoader {
     /// Calculate slope from an elevation array using numpy-style gradient.
     ///
     /// Returns slope in degrees.  NoData pixels produce NaN output.
-    pub fn calculate_slope(
-        elev: &Array2<f32>,
-        res_x: f64,
-        res_y: f64,
-    ) -> Array2<f32> {
+    pub fn calculate_slope(elev: &Array2<f32>, res_x: f64, res_y: f64) -> Array2<f32> {
         let (rows, cols) = elev.dim();
         let mut slope = Array2::<f32>::zeros((rows, cols));
 
@@ -88,11 +81,7 @@ impl DEMLoader {
     ///
     /// Returns aspect in degrees (0-360, clockwise from north).
     /// NoData pixels produce NaN output.
-    pub fn calculate_aspect(
-        elev: &Array2<f32>,
-        res_x: f64,
-        res_y: f64,
-    ) -> Array2<f32> {
+    pub fn calculate_aspect(elev: &Array2<f32>, res_x: f64, res_y: f64) -> Array2<f32> {
         let (rows, cols) = elev.dim();
         let mut aspect = Array2::<f32>::zeros((rows, cols));
 
@@ -177,20 +166,16 @@ mod tests {
         let path_str = path.to_str().unwrap().to_string();
 
         let driver = DriverManager::get_driver_by_name("GTiff").unwrap();
-        let mut ds = driver
-            .create(&path_str, 5, 5, 1)
-            .unwrap();
+        let mut ds = driver.create(&path_str, 5, 5, 1).unwrap();
         ds.set_geo_transform(&[0.0, 30.0, 0.0, 0.0, 0.0, -30.0])
             .unwrap();
         let mut band = ds.rasterband(1).unwrap();
         band.set_no_data_value(Some(-9999.0)).unwrap();
 
         let data: Vec<f32> = vec![
-            100.0, 110.0, 120.0, -9999.0, 90.0,
-            105.0, 115.0, 125.0, 95.0, 85.0,
-            110.0, 120.0, 130.0, 100.0, 80.0,
-            115.0, 125.0, 135.0, 105.0, 75.0,
-            -9999.0, 130.0, 140.0, 110.0, 70.0,
+            100.0, 110.0, 120.0, -9999.0, 90.0, 105.0, 115.0, 125.0, 95.0, 85.0, 110.0, 120.0,
+            130.0, 100.0, 80.0, 115.0, 125.0, 135.0, 105.0, 75.0, -9999.0, 130.0, 140.0, 110.0,
+            70.0,
         ];
         let buf = gdal::raster::Buffer::new((5, 5), data);
         band.write((0, 0), (5, 5), &buf).unwrap();

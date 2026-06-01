@@ -78,11 +78,7 @@ impl DisturbanceClassLoader {
     }
 
     /// Load disturbance class data as f32 with NoData replaced by NaN.
-    pub fn load_f32(
-        &self,
-        year: i32,
-        window: &Window,
-    ) -> LoaderResult<Option<Array2<f32>>> {
+    pub fn load_f32(&self, year: i32, window: &Window) -> LoaderResult<Option<Array2<f32>>> {
         let (arr_u8, nodata) = match self.load(year, window)? {
             Some(v) => v,
             None => return Ok(None),

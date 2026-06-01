@@ -21,18 +21,13 @@ use std::path::{Path, PathBuf};
 ///   - `"auto"` → [`Workers::Auto`] (use all logical CPUs)
 ///   - a positive integer → [`Workers::Count`] with that many threads
 ///   - `0`  → rejected by validation
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Workers {
     /// Use `std::thread::available_parallelism()` at runtime.
+    #[default]
     Auto,
     /// Fixed number of workers (≥ 1).
     Count(NonZeroUsize),
-}
-
-impl Default for Workers {
-    fn default() -> Self {
-        Workers::Auto
-    }
 }
 
 impl<'de> Deserialize<'de> for Workers {
@@ -551,6 +546,7 @@ pub struct AppConfig {
     pub(crate) config_dir: Option<PathBuf>,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for AppConfig {
     fn default() -> Self {
         Self {

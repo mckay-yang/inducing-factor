@@ -128,13 +128,11 @@ pub fn true_relative_risk(
 ) -> f64 {
     let count_pattern_bg_adj = (count_pattern_bg.max(0) as f64) + epsilon;
     let n_pattern = count_pattern_event as f64 + count_pattern_bg_adj;
-    let n_not_pattern = n_event as f64 + n_bg as f64 - count_pattern_event as f64
-        - count_pattern_bg.max(0) as f64;
-    let p_event_given_pattern =
-        (count_pattern_event as f64 + epsilon) / (n_pattern + epsilon);
-    let p_event_given_not_pattern =
-        ((n_event - count_pattern_event).max(0) as f64 + epsilon)
-            / (n_not_pattern.max(1.0) + epsilon);
+    let n_not_pattern =
+        n_event as f64 + n_bg as f64 - count_pattern_event as f64 - count_pattern_bg.max(0) as f64;
+    let p_event_given_pattern = (count_pattern_event as f64 + epsilon) / (n_pattern + epsilon);
+    let p_event_given_not_pattern = ((n_event - count_pattern_event).max(0) as f64 + epsilon)
+        / (n_not_pattern.max(1.0) + epsilon);
     p_event_given_pattern / p_event_given_not_pattern
 }
 
@@ -181,9 +179,7 @@ pub fn morans_i(values: &[f64], weights: &[Vec<f64>]) -> (f64, f64) {
         })
         .sum();
     let n_f = n as f64;
-    let var_i = (n_f * (n_f * n_f - 3.0 * n_f + 3.0) * s1
-        - n_f * s2
-        + 3.0 * s0 * s0)
+    let var_i = (n_f * (n_f * n_f - 3.0 * n_f + 3.0) * s1 - n_f * s2 + 3.0 * s0 * s0)
         / ((n_f - 1.0) * (n_f - 2.0) * (n_f - 3.0) * s0 * s0)
         - e_i * e_i;
 
@@ -221,7 +217,11 @@ mod tests {
     fn test_entropy_pure() {
         let labels = vec![1, 1, 1, 1];
         let h = entropy(&labels);
-        assert!(h.abs() < 2e-12, "entropy of pure set should be near zero, got {}", h);
+        assert!(
+            h.abs() < 2e-12,
+            "entropy of pure set should be near zero, got {}",
+            h
+        );
     }
 
     #[test]

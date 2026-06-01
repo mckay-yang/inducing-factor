@@ -34,16 +34,16 @@ impl LandUseLoader {
         }
         let y = year.expect("year required for temporal land-use");
         let fname = self.file_pattern.replace("{year}", &y.to_string());
-        Path::new(&self.path).join(fname).to_str().unwrap_or("").to_string()
+        Path::new(&self.path)
+            .join(fname)
+            .to_str()
+            .unwrap_or("")
+            .to_string()
     }
 
     /// Load land-use categorical values for a given year and window.
     /// Returns `None` if the file is missing.
-    pub fn load(
-        &self,
-        year: Option<i32>,
-        window: &Window,
-    ) -> LoaderResult<Option<Array2<f32>>> {
+    pub fn load(&self, year: Option<i32>, window: &Window) -> LoaderResult<Option<Array2<f32>>> {
         let path = self.target_path(year);
         if !Path::new(&path).exists() {
             return Ok(None);

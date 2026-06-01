@@ -12,10 +12,7 @@ pub struct ClimateLoader {
 }
 
 impl ClimateLoader {
-    pub fn new(
-        rainfall_dir: Option<&str>,
-        temperature_dir: Option<&str>,
-    ) -> Self {
+    pub fn new(rainfall_dir: Option<&str>, temperature_dir: Option<&str>) -> Self {
         Self {
             rainfall_dir: rainfall_dir.map(String::from),
             temperature_dir: temperature_dir.map(String::from),
@@ -92,11 +89,8 @@ impl ClimateLoader {
             )
             .map_err(|e| LoaderError::Gdal(e.to_string()))?;
 
-        let arr = Array2::from_shape_vec(
-            (window.height, window.width),
-            data.data,
-        )
-        .map_err(|e| LoaderError::Gdal(format!("shape: {e}")))?;
+        let arr = Array2::from_shape_vec((window.height, window.width), data.data)
+            .map_err(|e| LoaderError::Gdal(format!("shape: {e}")))?;
 
         Ok(Some(arr))
     }
@@ -113,10 +107,10 @@ impl ClimateLoader {
             None => return Ok(None),
         };
 
-        let file = netcdf::open(&path)
-            .map_err(|e| LoaderError::NetCdf(e.to_string()))?;
+        let file = netcdf::open(&path).map_err(|e| LoaderError::NetCdf(e.to_string()))?;
 
-        let var = file.variable("tmp")
+        let var = file
+            .variable("tmp")
             .map_err(|e| LoaderError::NetCdf(format!("variable 'tmp': {e}")))?;
 
         let values = var
@@ -129,9 +123,7 @@ impl ClimateLoader {
         } else if shape.len() == 2 {
             (shape[0], shape[1])
         } else {
-            return Err(LoaderError::NetCdf(format!(
-                "unexpected shape: {shape:?}"
-            )));
+            return Err(LoaderError::NetCdf(format!("unexpected shape: {shape:?}")));
         };
 
         let arr = Array2::from_shape_vec((rows, cols), values.into_raw())
@@ -139,7 +131,10 @@ impl ClimateLoader {
 
         let end_row = (window.row_off + window.height).min(rows);
         let end_col = (window.col_off + window.width).min(cols);
-        let slice = arr.slice(ndarray::s![window.row_off..end_row, window.col_off..end_col]);
+        let slice = arr.slice(ndarray::s![
+            window.row_off..end_row,
+            window.col_off..end_col
+        ]);
         Ok(Some(slice.to_owned()))
     }
 
@@ -245,15 +240,21 @@ mod tests {
         let dir = TempDir::new().unwrap();
         create_synthetic_rainfall(
             dir.path().join("pre201801.tif").to_str().unwrap(),
-            &[1.0], 1, 1,
+            &[1.0],
+            1,
+            1,
         );
         create_synthetic_rainfall(
             dir.path().join("pre201901.tif").to_str().unwrap(),
-            &[1.0], 1, 1,
+            &[1.0],
+            1,
+            1,
         );
         create_synthetic_rainfall(
             dir.path().join("pre202001.tif").to_str().unwrap(),
-            &[1.0], 1, 1,
+            &[1.0],
+            1,
+            1,
         );
 
         let loader = ClimateLoader::new(Some(dir.path().to_str().unwrap()), None);

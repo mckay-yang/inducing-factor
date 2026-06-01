@@ -27,7 +27,12 @@ pub struct Cpd {
 
 impl Cpd {
     /// Create a new CPD with uniform distribution.
-    pub fn new(variable: String, states: Vec<String>, parents: Vec<String>, parent_card: Vec<usize>) -> Self {
+    pub fn new(
+        variable: String,
+        states: Vec<String>,
+        parents: Vec<String>,
+        parent_card: Vec<usize>,
+    ) -> Self {
         let n_configs = parent_card.iter().product::<usize>().max(1);
         let n_states = states.len().max(1);
         let uniform = 1.0 / n_states as f64;
@@ -142,9 +147,7 @@ impl BayesianNetwork {
         let elim_order: Vec<String> = self
             .node_order
             .iter()
-            .filter(|n| {
-                n.as_str() != query_var && !evidence.contains_key(n.as_str())
-            })
+            .filter(|n| n.as_str() != query_var && !evidence.contains_key(n.as_str()))
             .cloned()
             .collect();
 
@@ -181,9 +184,13 @@ impl BayesianNetwork {
     /// Check model validity (CPDs sum to 1).
     pub fn check_model(&self) -> bool {
         for cpd in self.cpds.values() {
-        let n_configs = cpd.parent_card.iter().product::<usize>().max(1);
+            let n_configs = cpd.parent_card.iter().product::<usize>().max(1);
             for pi in 0..n_configs {
-                let sum: f64 = cpd.values.iter().map(|row| row.get(pi).copied().unwrap_or(0.0)).sum();
+                let sum: f64 = cpd
+                    .values
+                    .iter()
+                    .map(|row| row.get(pi).copied().unwrap_or(0.0))
+                    .sum();
                 if (sum - 1.0).abs() > 1e-6 {
                     return false;
                 }
@@ -237,16 +244,29 @@ impl ConditionalFactor {
 
         // Iterate over all parent configs and node states, filling in
         // This is a simplified version for binary/moderate-size networks
-        fill_factor_values(&mut values, &variables, &cards, &fixed_vars, cpd, 0, 0, &mut vec![0; 10]);
+        fill_factor_values(
+            &mut values,
+            &variables,
+            &cards,
+            &fixed_vars,
+            cpd,
+            0,
+            0,
+            &mut [0; 10],
+        );
 
         Self {
-            variables: variables.into_iter().filter(|v| !fixed_vars.contains_key(v)).collect(),
+            variables: variables
+                .into_iter()
+                .filter(|v| !fixed_vars.contains_key(v))
+                .collect(),
             values: values.into_iter().filter(|_| true).collect(),
             cards: cards.into_iter().filter(|&c| c > 1).collect(),
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_factor_values(
     values: &mut [f64],
     variables: &[String],
@@ -276,7 +296,16 @@ fn fill_factor_values(
 
     let v = &variables[depth];
     if fixed.contains_key(v.as_str()) {
-        fill_factor_values(values, variables, cards, fixed, cpd, depth + 1, base_idx, state_assignment);
+        fill_factor_values(
+            values,
+            variables,
+            cards,
+            fixed,
+            cpd,
+            depth + 1,
+            base_idx,
+            state_assignment,
+        );
     } else {
         let card = cards[depth];
         let stride: usize = cards[(depth + 1)..].iter().product();
@@ -344,8 +373,18 @@ fn multiply_factors(f1: &ConditionalFactor, f2: &ConditionalFactor) -> Condition
 
     let mut cards: Vec<usize> = Vec::new();
     for v in &all_vars {
-        let c1 = f1.variables.iter().position(|x| x == v).map(|i| f1.cards[i]).unwrap_or(1);
-        let c2 = f2.variables.iter().position(|x| x == v).map(|i| f2.cards[i]).unwrap_or(1);
+        let c1 = f1
+            .variables
+            .iter()
+            .position(|x| x == v)
+            .map(|i| f1.cards[i])
+            .unwrap_or(1);
+        let c2 = f2
+            .variables
+            .iter()
+            .position(|x| x == v)
+            .map(|i| f2.cards[i])
+            .unwrap_or(1);
         cards.push(c1.max(c2));
     }
 
@@ -368,7 +407,7 @@ fn multiply_factors(f1: &ConditionalFactor, f2: &ConditionalFactor) -> Condition
         }
     }
 
-    for ti in 0..total {
+    for (ti, value_slot) in values.iter_mut().enumerate() {
         let mut idx1 = 0;
         let mut idx2 = 0;
         let mut temp = ti;
@@ -386,7 +425,7 @@ fn multiply_factors(f1: &ConditionalFactor, f2: &ConditionalFactor) -> Condition
                 idx2 += si * stride2;
             }
         }
-        values[ti] = f1.values.get(idx1).copied().unwrap_or(0.0)
+        *value_slot = f1.values.get(idx1).copied().unwrap_or(0.0)
             * f2.values.get(idx2).copied().unwrap_or(0.0);
     }
 
@@ -406,12 +445,18 @@ fn sum_out(f: &ConditionalFactor, var: &str) -> ConditionalFactor {
     let var_idx = var_idx.unwrap();
     let var_card = f.cards[var_idx];
 
-    let new_vars: Vec<String> = f.variables.iter().enumerate()
+    let new_vars: Vec<String> = f
+        .variables
+        .iter()
+        .enumerate()
         .filter(|(i, _)| *i != var_idx)
         .map(|(_, v)| v.clone())
         .collect();
 
-    let new_cards: Vec<usize> = f.cards.iter().enumerate()
+    let new_cards: Vec<usize> = f
+        .cards
+        .iter()
+        .enumerate()
         .filter(|(i, _)| *i != var_idx)
         .map(|(_, &c)| c)
         .collect();
@@ -460,7 +505,10 @@ fn multiply_and_query(
     _evidence: &HashMap<String, String>,
 ) -> QueryResult {
     if factors.is_empty() {
-        return QueryResult { num: 0.5, denom: 1.0 };
+        return QueryResult {
+            num: 0.5,
+            denom: 1.0,
+        };
     }
 
     // Combine all factors
@@ -479,7 +527,10 @@ fn multiply_and_query(
 
             let mut probs = Vec::new();
             if combined.values.is_empty() {
-                return QueryResult { num: 0.5, denom: 1.0 };
+                return QueryResult {
+                    num: 0.5,
+                    denom: 1.0,
+                };
             }
             for si in 0..var_card {
                 let mut sum = 0.0;
@@ -499,7 +550,10 @@ fn multiply_and_query(
         }
         None => {
             // Query var not in remaining factors — uniform
-            QueryResult { num: 0.5, denom: 1.0 }
+            QueryResult {
+                num: 0.5,
+                denom: 1.0,
+            }
         }
     }
 }
@@ -508,7 +562,8 @@ fn multiply_and_query(
 
 fn topological_sort(nodes: &[String], edges: &[(String, String)]) -> Vec<String> {
     let mut in_degree: HashMap<String, usize> = nodes.iter().map(|n| (n.clone(), 0)).collect();
-    let mut adj: HashMap<String, Vec<String>> = nodes.iter().map(|n| (n.clone(), Vec::new())).collect();
+    let mut adj: HashMap<String, Vec<String>> =
+        nodes.iter().map(|n| (n.clone(), Vec::new())).collect();
 
     for (p, c) in edges {
         *in_degree.entry(c.clone()).or_insert(0) += 1;
@@ -717,11 +772,8 @@ impl BayesianAttributionEngine {
                     if factor_ids.contains(p) || p == target {
                         2
                     } else {
-                        let unique: HashSet<String> = bn_df
-                            .iter()
-                            .filter_map(|row| row.get(p))
-                            .cloned()
-                            .collect();
+                        let unique: HashSet<String> =
+                            bn_df.iter().filter_map(|row| row.get(p)).cloned().collect();
                         unique.len().max(2)
                     }
                 })
@@ -756,7 +808,11 @@ impl BayesianAttributionEngine {
             for ci in 0..n_configs {
                 let sum: f64 = counts.iter().map(|row| row[ci]).sum();
                 for si in 0..node_card {
-                    values[si][ci] = if sum > 0.0 { counts[si][ci] / sum } else { 1.0 / node_card as f64 };
+                    values[si][ci] = if sum > 0.0 {
+                        counts[si][ci] / sum
+                    } else {
+                        1.0 / node_card as f64
+                    };
                 }
             }
 
@@ -787,8 +843,7 @@ impl BayesianAttributionEngine {
         training_targets: &[f64],
         selected_factors: &[InducingFactor],
     ) {
-        let (edges, network_features, factor_columns) =
-            Self::build_fixed_edges(selected_factors);
+        let (edges, network_features, factor_columns) = Self::build_fixed_edges(selected_factors);
 
         self.edges = edges.clone();
         self.network_features = network_features.clone();
@@ -808,7 +863,7 @@ impl BayesianAttributionEngine {
             }
             // Add factor activations
             for factor in selected_factors {
-                let active = factor_activation_for_row_int(row, &[factor.clone()])[0];
+                let active = factor_activation_for_row_int(row, std::slice::from_ref(factor))[0];
                 bn_row.insert(factor.factor_id.clone(), active.to_string());
             }
             // Add target
@@ -862,7 +917,7 @@ impl BayesianAttributionEngine {
         training_targets: &[f64],
         selected_factors: &[InducingFactor],
     ) {
-        let X = build_factor_activation(label_df, selected_factors);
+        let x_matrix = build_factor_activation(label_df, selected_factors);
 
         let n_pos: f64 = training_targets.iter().filter(|&&v| v > 0.5).count() as f64;
         let n_neg = training_targets.len() as f64 - n_pos;
@@ -877,14 +932,17 @@ impl BayesianAttributionEngine {
         let class_weight = vec![neg_weight, pos_weight];
 
         let (weights, intercept) = fit_logistic_binary_internal(
-            &X,
+            &x_matrix,
             training_targets,
             Some(&class_weight),
             100,
             1.0,
         );
 
-        let factor_ids: Vec<String> = selected_factors.iter().map(|f| f.factor_id.clone()).collect();
+        let factor_ids: Vec<String> = selected_factors
+            .iter()
+            .map(|f| f.factor_id.clone())
+            .collect();
 
         self.fallback = Some(FallbackAttributionModelData {
             edges: self.edges.clone(),
@@ -900,11 +958,7 @@ impl BayesianAttributionEngine {
 
     /// Compute inference result for a single sample.
     /// Returns probability of disturbance (target=1) given evidence.
-    pub fn infer_single(
-        &self,
-        row: &HashMap<String, String>,
-        factors: &[InducingFactor],
-    ) -> f64 {
+    pub fn infer_single(&self, row: &HashMap<String, String>, factors: &[InducingFactor]) -> f64 {
         if let Some(ref bn) = self.model {
             // Build evidence from factor activations
             let mut evidence = HashMap::new();
@@ -916,7 +970,7 @@ impl BayesianAttributionEngine {
             }
             // Add factor evidence
             for factor in factors {
-                let active = factor_activation_for_row_int(row, &[factor.clone()])[0];
+                let active = factor_activation_for_row_int(row, std::slice::from_ref(factor))[0];
                 evidence.insert(factor.factor_id.clone(), active.to_string());
             }
 
@@ -950,7 +1004,7 @@ impl BayesianAttributionEngine {
         // Compute per-factor contributions using factor activations
         let mut factor_probs: Vec<(String, f64)> = Vec::new();
         for factor in factors {
-            let active = factor_activation_for_row_int(row, &[factor.clone()])[0];
+            let active = factor_activation_for_row_int(row, std::slice::from_ref(factor))[0];
             let prob = if active > 0 {
                 // Factor active: use factor's relative risk to estimate contribution
                 (factor.relative_risk / (factor.relative_risk + 1.0)).clamp(0.0, 0.99)
@@ -968,9 +1022,7 @@ impl BayesianAttributionEngine {
         } else {
             let top = &factor_probs[0];
             let second = factor_probs.get(1);
-            if top.1 >= self.dominant_threshold
-                && second.map_or(true, |s| top.1 - s.1 >= 0.05)
-            {
+            if top.1 >= self.dominant_threshold && second.is_none_or(|s| top.1 - s.1 >= 0.05) {
                 ("single_factor_dominant".to_string(), top.0.clone(), top.1)
             } else if top.1 + second.map(|s| s.1).unwrap_or(0.0) >= self.synergy_threshold {
                 ("multi_factor_synergy".to_string(), top.0.clone(), top.1)
@@ -1021,16 +1073,32 @@ mod tests {
             name: format!("{}_name", id),
             semantics: format!("{}_sem", id),
             items: vec![format!("feat_a=high")],
-            support_event: 0.5, support_background: 0.1, relative_risk: 5.0, stability: 1.0,
-            score: 1.0, count_event: 50, count_background: 10, n_event: 100, n_background: 100,
-            rr_ci_lower: 2.0, rr_ci_upper: 10.0, p_value: 0.01, fdr_significant: true,
-            likelihood_ratio: 5.0, true_relative_risk: 5.0,
+            support_event: 0.5,
+            support_background: 0.1,
+            relative_risk: 5.0,
+            stability: 1.0,
+            score: 1.0,
+            count_event: 50,
+            count_background: 10,
+            n_event: 100,
+            n_background: 100,
+            rr_ci_lower: 2.0,
+            rr_ci_upper: 10.0,
+            p_value: 0.01,
+            fdr_significant: true,
+            likelihood_ratio: 5.0,
+            true_relative_risk: 5.0,
         }
     }
 
     #[test]
     fn test_topological_sort() {
-        let nodes = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        let nodes = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
         let edges = vec![
             ("a".to_string(), "b".to_string()),
             ("b".to_string(), "c".to_string()),
@@ -1052,10 +1120,21 @@ mod tests {
             name: "f1".to_string(),
             semantics: "f1".to_string(),
             items: vec!["a=high".to_string(), "b=near".to_string()],
-            support_event: 0.5, support_background: 0.1, relative_risk: 5.0, stability: 1.0,
-            score: 1.0, count_event: 50, count_background: 10, n_event: 100, n_background: 100,
-            rr_ci_lower: 2.0, rr_ci_upper: 10.0, p_value: 0.01, fdr_significant: true,
-            likelihood_ratio: 5.0, true_relative_risk: 5.0,
+            support_event: 0.5,
+            support_background: 0.1,
+            relative_risk: 5.0,
+            stability: 1.0,
+            score: 1.0,
+            count_event: 50,
+            count_background: 10,
+            n_event: 100,
+            n_background: 100,
+            rr_ci_lower: 2.0,
+            rr_ci_upper: 10.0,
+            p_value: 0.01,
+            fdr_significant: true,
+            likelihood_ratio: 5.0,
+            true_relative_risk: 5.0,
         };
 
         let (edges, network_features, factor_columns) =
@@ -1080,8 +1159,15 @@ mod tests {
 
         let cpds = BayesianAttributionEngine::estimate_cpds(
             &bn_df,
-            &[("a".to_string(), "IF_001".to_string()), ("IF_001".to_string(), "disturbance_flag".to_string())],
-            &["a".to_string(), "IF_001".to_string(), "disturbance_flag".to_string()],
+            &[
+                ("a".to_string(), "IF_001".to_string()),
+                ("IF_001".to_string(), "disturbance_flag".to_string()),
+            ],
+            &[
+                "a".to_string(),
+                "IF_001".to_string(),
+                "disturbance_flag".to_string(),
+            ],
             &["IF_001".to_string()],
             &["a".to_string()],
             "disturbance_flag",
@@ -1106,38 +1192,47 @@ mod tests {
         let mut cpds = HashMap::new();
 
         // P(a)
-        cpds.insert("a".to_string(), Cpd {
-            variable: "a".to_string(),
-            states: vec!["high".to_string(), "low".to_string()],
-            parents: vec![],
-            parent_card: vec![],
-            values: vec![vec![0.8], vec![0.2]], // P(a=high)=0.8, P(a=low)=0.2
-        });
+        cpds.insert(
+            "a".to_string(),
+            Cpd {
+                variable: "a".to_string(),
+                states: vec!["high".to_string(), "low".to_string()],
+                parents: vec![],
+                parent_card: vec![],
+                values: vec![vec![0.8], vec![0.2]], // P(a=high)=0.8, P(a=low)=0.2
+            },
+        );
 
         // P(IF_001 | a): IF_001 has states ["0", "1"]
         // IF_001=1 | a=high = 0.9, IF_001=1 | a=low = 0.1
-        cpds.insert("IF_001".to_string(), Cpd {
-            variable: "IF_001".to_string(),
-            states: vec!["0".to_string(), "1".to_string()],
-            parents: vec!["a".to_string()],
-            parent_card: vec![2],
-            values: vec![
-                vec![0.1, 0.9],  // P(IF_001=0 | a=high)=0.1, P(IF_001=0 | a=low)=0.9
-                vec![0.9, 0.1],  // P(IF_001=1 | ...)
-            ],
-        });
+        cpds.insert(
+            "IF_001".to_string(),
+            Cpd {
+                variable: "IF_001".to_string(),
+                states: vec!["0".to_string(), "1".to_string()],
+                parents: vec!["a".to_string()],
+                parent_card: vec![2],
+                values: vec![
+                    vec![0.1, 0.9], // P(IF_001=0 | a=high)=0.1, P(IF_001=0 | a=low)=0.9
+                    vec![0.9, 0.1], // P(IF_001=1 | ...)
+                ],
+            },
+        );
 
         // P(target | IF_001)
-        cpds.insert("disturbance_flag".to_string(), Cpd {
-            variable: "disturbance_flag".to_string(),
-            states: vec!["0".to_string(), "1".to_string()],
-            parents: vec!["IF_001".to_string()],
-            parent_card: vec![2],
-            values: vec![
-                vec![0.95, 0.3], // P(target=0 | IF=0)=0.95, P(target=0 | IF=1)=0.3
-                vec![0.05, 0.7], // P(target=1 | ...)
-            ],
-        });
+        cpds.insert(
+            "disturbance_flag".to_string(),
+            Cpd {
+                variable: "disturbance_flag".to_string(),
+                states: vec!["0".to_string(), "1".to_string()],
+                parents: vec!["IF_001".to_string()],
+                parent_card: vec![2],
+                values: vec![
+                    vec![0.95, 0.3], // P(target=0 | IF=0)=0.95, P(target=0 | IF=1)=0.3
+                    vec![0.05, 0.7], // P(target=1 | ...)
+                ],
+            },
+        );
 
         bn.cpds = cpds;
 
@@ -1161,12 +1256,8 @@ mod tests {
         ];
         let targets = vec![1.0, 0.0];
 
-        let mut engine = BayesianAttributionEngine::new(
-            "disturbance_flag".to_string(),
-            42,
-            0.55,
-            0.75,
-        );
+        let mut engine =
+            BayesianAttributionEngine::new("disturbance_flag".to_string(), 42, 0.55, 0.75);
 
         engine.fit(&label_df, &targets, &[f1]);
 
@@ -1177,7 +1268,8 @@ mod tests {
 
         // Either BN or fallback
         assert!(
-            engine.model_backend == "bayesian_network" || engine.model_backend == "logistic_fallback"
+            engine.model_backend == "bayesian_network"
+                || engine.model_backend == "logistic_fallback"
         );
     }
 
@@ -1194,17 +1286,13 @@ mod tests {
         ];
         let targets = vec![1.0, 1.0, 0.0, 0.0];
 
-        let mut engine = BayesianAttributionEngine::new(
-            "disturbance_flag".to_string(),
-            42,
-            0.55,
-            0.75,
-        );
+        let mut engine =
+            BayesianAttributionEngine::new("disturbance_flag".to_string(), 42, 0.55, 0.75);
 
-        engine.fit(&label_df, &targets, &[f1.clone()]);
+        engine.fit(&label_df, &targets, std::slice::from_ref(&f1));
 
         let prob = engine.infer_single(&make_row(&[("feat_a", "high")]), &[f1]);
-        assert!(prob >= 0.0 && prob <= 1.0, "Prob out of range: {}", prob);
+        assert!((0.0..=1.0).contains(&prob), "Prob out of range: {}", prob);
     }
 
     #[test]
@@ -1218,14 +1306,10 @@ mod tests {
         ];
         let targets = vec![1.0, 1.0, 0.0];
 
-        let mut engine = BayesianAttributionEngine::new(
-            "disturbance_flag".to_string(),
-            42,
-            0.55,
-            0.75,
-        );
+        let mut engine =
+            BayesianAttributionEngine::new("disturbance_flag".to_string(), 42, 0.55, 0.75);
 
-        engine.fit(&label_df, &targets, &[f1.clone()]);
+        engine.fit(&label_df, &targets, std::slice::from_ref(&f1));
 
         let result = engine.attribute_sample(&make_row(&[("feat_a", "high")]), &[f1]);
         assert!(result.bayesian_probability >= 0.0 && result.bayesian_probability <= 1.0);

@@ -29,10 +29,7 @@ impl StratifiedBackgroundSampler {
         }
     }
 
-    pub fn sample(
-        &self,
-        df_background: &DataFrame,
-    ) -> PolarsResult<DataFrame> {
+    pub fn sample(&self, df_background: &DataFrame) -> PolarsResult<DataFrame> {
         let n_bg = df_background.height();
         if n_bg == 0 {
             return Ok(df_background.clone());
@@ -56,10 +53,8 @@ impl StratifiedBackgroundSampler {
         indices.truncate(sample_n);
         indices.sort_unstable();
 
-        let mask = BooleanChunked::from_iter(
-            (0..n_bg).map(|i| indices.binary_search(&i).is_ok()),
-        );
-        Ok(df_background.filter(&mask)?)
+        let mask = BooleanChunked::from_iter((0..n_bg).map(|i| indices.binary_search(&i).is_ok()));
+        df_background.filter(&mask)
     }
 
     pub fn ensure_no_overlap(
@@ -74,14 +69,14 @@ impl StratifiedBackgroundSampler {
             .column("point_id")?
             .i64()?
             .into_iter()
-            .filter_map(|v| v)
+            .flatten()
             .collect();
 
         let bg_ids: Vec<i64> = background
             .column("point_id")?
             .i64()?
             .into_iter()
-            .filter_map(|v| v)
+            .flatten()
             .collect();
 
         let mask: Vec<bool> = bg_ids.iter().map(|id| !dist_ids.contains(id)).collect();
@@ -211,7 +206,7 @@ mod tests {
             .i64()
             .unwrap()
             .into_iter()
-            .filter_map(|v| v)
+            .flatten()
             .collect();
 
         let dist_ids: std::collections::HashSet<i64> = df_dist
@@ -220,19 +215,22 @@ mod tests {
             .i64()
             .unwrap()
             .into_iter()
-            .filter_map(|v| v)
+            .flatten()
             .collect();
 
         for id in &clean_ids {
-            assert!(!dist_ids.contains(id), "Background point {} overlaps disturbance", id);
+            assert!(
+                !dist_ids.contains(id),
+                "Background point {} overlaps disturbance",
+                id
+            );
         }
     }
 
     #[test]
     fn test_sample_rate_one() {
-        let points: Vec<(i64, f64, f64, i32)> = (0..10)
-            .map(|i| (i as i64, i as f64, 29.0, 2020))
-            .collect();
+        let points: Vec<(i64, f64, f64, i32)> =
+            (0..10).map(|i| (i as i64, i as f64, 29.0, 2020)).collect();
         let features = HashMap::new();
         let df = build_chunk_dataframe(
             &ChunkTask {

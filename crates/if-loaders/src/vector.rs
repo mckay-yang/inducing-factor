@@ -1,8 +1,8 @@
 use gdal::vector::LayerAccess;
+use gdal::Dataset;
 use geo::EuclideanDistance;
 use geo::Geometry;
-use gdal::Dataset;
-use rstar::{RTree, RTreeObject, AABB, PointDistance};
+use rstar::{PointDistance, RTree, RTreeObject, AABB};
 
 use crate::base::{LoaderError, LoaderResult, VectorDistanceLoader};
 
@@ -14,10 +14,8 @@ struct IndexedGeom {
 impl IndexedGeom {
     fn from_geom(geom: Geometry<f64>) -> Self {
         let bbox = bbox_of(&geom);
-        let envelope = AABB::from_corners(
-            [bbox.min().x, bbox.min().y],
-            [bbox.max().x, bbox.max().y],
-        );
+        let envelope =
+            AABB::from_corners([bbox.min().x, bbox.min().y], [bbox.max().x, bbox.max().y]);
         Self { geom, envelope }
     }
 }

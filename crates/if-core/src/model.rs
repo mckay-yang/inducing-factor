@@ -153,7 +153,11 @@ pub fn factor_activation_for_row(
                     }
                 }
             }
-            if active { 1.0 } else { 0.0 }
+            if active {
+                1.0
+            } else {
+                0.0
+            }
         })
         .collect()
 }
@@ -176,7 +180,11 @@ pub fn factor_activation_for_row_int(
                     }
                 }
             }
-            if active { 1 } else { 0 }
+            if active {
+                1
+            } else {
+                0
+            }
         })
         .collect()
 }
@@ -187,7 +195,7 @@ pub fn factor_activation_for_row_int(
 /// Binary logistic regression via IRLS with L2 regularization.
 /// Returns (weights, intercept).
 pub fn fit_logistic_binary_internal(
-    X: &Array2<f64>,
+    #[allow(non_snake_case)] X: &Array2<f64>,
     y: &[f64],
     class_weight: Option<&[f64]>,
     max_iter: usize,
@@ -212,8 +220,7 @@ pub fn fit_logistic_binary_internal(
     let has_weights = class_weight.is_some();
     let w: Vec<f64> = if let Some(cw) = class_weight {
         y.iter()
-            .enumerate()
-            .map(|(_i, &yi)| if yi > 0.5 { cw[1] } else { cw[0] })
+            .map(|yi| if *yi > 0.5 { cw[1] } else { cw[0] })
             .collect()
     } else {
         vec![1.0; n_samples]
@@ -237,7 +244,7 @@ pub fn fit_logistic_binary_internal(
         // Compute p_i = sigmoid(X_i · beta)
         let mut p = vec![0.0; n_samples];
         let mut has_non_finite = false;
-        for i in 0..n_samples {
+        for (i, pi) in p.iter_mut().enumerate() {
             let lin: f64 = X_aug
                 .row(i)
                 .iter()
@@ -246,8 +253,8 @@ pub fn fit_logistic_binary_internal(
                 .sum();
             // Clamp to avoid overflow
             let clamped = lin.clamp(-30.0, 30.0);
-            p[i] = sigmoid(clamped);
-            if !p[i].is_finite() {
+            *pi = sigmoid(clamped);
+            if !(*pi).is_finite() {
                 has_non_finite = true;
             }
         }
@@ -305,7 +312,7 @@ pub fn fit_logistic_binary_internal(
 /// Multinomial (softmax) logistic regression via gradient-based optimization.
 /// One-vs-rest approach: fit K-1 binary classifiers, then softmax.
 fn fit_logistic_multiclass(
-    X: &Array2<f64>,
+    #[allow(non_snake_case)] X: &Array2<f64>,
     y: &[f64],
     classes: &[i64],
     class_weight: Option<&[f64]>,
@@ -325,11 +332,17 @@ fn fit_logistic_multiclass(
     let mut all_weights = Vec::with_capacity(n_classes);
     let mut all_intercepts = Vec::with_capacity(n_classes);
 
-    for ci in 0..n_classes {
-        let target_class = classes[ci] as f64;
+    for target_class in classes.iter() {
+        let target_class = *target_class as f64;
         let y_binary: Vec<f64> = y
             .iter()
-            .map(|&val| if (val - target_class).abs() < 0.5 { 1.0 } else { 0.0 })
+            .map(|&val| {
+                if (val - target_class).abs() < 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
             .collect();
 
         // Check if all labels are the same
@@ -348,7 +361,7 @@ fn fit_logistic_multiclass(
                 let neg_w = n_samples as f64 / (2.0 * n_neg.max(1.0));
                 vec![neg_w, pos_w]
             });
-            let cw_ref = cw.as_ref().map(|v| v.as_slice());
+            let cw_ref = cw.as_deref();
             let (w, intercept) =
                 fit_logistic_binary_internal(X, &y_binary, cw_ref, max_iter, l2_penalty);
             all_weights.push(w);
@@ -364,11 +377,8 @@ fn fit_logistic_multiclass(
 }
 
 /// Predict class probabilities via softmax.
-fn predict_softmax_proba(
-    X: &Array2<f64>,
-    weights: &[Vec<f64>],
-    intercepts: &[f64],
-) -> Array2<f64> {
+#[allow(non_snake_case)]
+fn predict_softmax_proba(X: &Array2<f64>, weights: &[Vec<f64>], intercepts: &[f64]) -> Array2<f64> {
     let n_samples = X.nrows();
     let n_classes = weights.len();
     let n_features = X.ncols();
@@ -429,7 +439,7 @@ impl OccurrenceProbabilityEngine {
         random_state: u64,
     ) {
         self.factor_ids = factors.iter().map(|f| f.factor_id.clone()).collect();
-        let X = build_factor_activation(label_df, factors);
+        let x_matrix = build_factor_activation(label_df, factors);
 
         let n_pos: f64 = target.iter().filter(|&&v| v > 0.5).count() as f64;
         let n_neg = target.len() as f64 - n_pos;
@@ -461,13 +471,8 @@ impl OccurrenceProbabilityEngine {
         // Suppress unused variable warning
         let _seed = random_state;
 
-        let (weights, intercept) = fit_logistic_binary_internal(
-            &X,
-            target,
-            Some(&class_weight),
-            100,
-            1.0,
-        );
+        let (weights, intercept) =
+            fit_logistic_binary_internal(&x_matrix, target, Some(&class_weight), 100, 1.0);
 
         self.weights = weights;
         self.intercept = intercept;
@@ -477,19 +482,23 @@ impl OccurrenceProbabilityEngine {
 
     /// Predict probability of disturbance (class 1) for each sample.
     /// Returns Vec<f64> where each value is in [0, 1].
-    pub fn predict_proba(&self, label_df: &[HashMap<String, String>], factors: &[InducingFactor]) -> Vec<f64> {
+    pub fn predict_proba(
+        &self,
+        label_df: &[HashMap<String, String>],
+        factors: &[InducingFactor],
+    ) -> Vec<f64> {
         let n = label_df.len();
         if n == 0 {
             return Vec::new();
         }
 
-        let X = build_factor_activation(label_df, factors);
+        let x_matrix = build_factor_activation(label_df, factors);
         let mut probs = Vec::with_capacity(n);
 
         for i in 0..n {
             let mut lin = self.intercept;
-            for j in 0..self.weights.len().min(X.ncols()) {
-                lin += self.weights[j] * X[[i, j]];
+            for j in 0..self.weights.len().min(x_matrix.ncols()) {
+                lin += self.weights[j] * x_matrix[[i, j]];
             }
             probs.push(sigmoid(lin.clamp(-30.0, 30.0)));
         }
@@ -583,13 +592,10 @@ impl DisturbanceClassEngine {
             .map(|&idx| label_df[idx].clone())
             .collect();
 
-        let X = build_factor_activation(&masked_label_df, factors);
+        let x_matrix = build_factor_activation(&masked_label_df, factors);
 
         // Get unique classes
-        let mut unique_classes: Vec<i64> = class_values
-            .iter()
-            .map(|&v| v as i64)
-            .collect();
+        let mut unique_classes: Vec<i64> = class_values.iter().map(|&v| v as i64).collect();
         unique_classes.sort();
         unique_classes.dedup();
 
@@ -625,7 +631,7 @@ impl DisturbanceClassEngine {
         let _seed = random_state;
 
         let (weights, intercepts) = fit_logistic_multiclass(
-            &X,
+            &x_matrix,
             class_values,
             &unique_classes,
             Some(&class_weight),
@@ -657,8 +663,8 @@ impl DisturbanceClassEngine {
             return vec![vec![(cls, 1.0)]; n];
         }
 
-        let X = build_factor_activation(label_df, factors);
-        let probas = predict_softmax_proba(&X, &self.weights, &self.intercepts);
+        let x_matrix = build_factor_activation(label_df, factors);
+        let probas = predict_softmax_proba(&x_matrix, &self.weights, &self.intercepts);
 
         let mut results = Vec::with_capacity(n);
         for i in 0..n {
@@ -691,6 +697,7 @@ impl DisturbanceClassEngine {
 
         // Compute logits
         let mut logits = vec![0.0; n_classes];
+        #[allow(clippy::needless_range_loop)]
         for ci in 0..n_classes {
             let mut lin = self.intercepts.get(ci).copied().unwrap_or(0.0);
             for (j, &val) in activation.iter().enumerate() {
@@ -742,7 +749,9 @@ mod tests {
 
     #[test]
     fn test_softmax_sums_to_one() {
-        let logits = Array2::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 1.0, 1.0, 1.0, 10.0, 0.0, 0.0]).unwrap();
+        let logits =
+            Array2::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 1.0, 1.0, 1.0, 10.0, 0.0, 0.0])
+                .unwrap();
         let probs = softmax(&logits);
         for r in 0..3 {
             let sum: f64 = probs.row(r).sum();
@@ -754,8 +763,8 @@ mod tests {
     fn test_factor_activation_empty() {
         let factors: Vec<InducingFactor> = vec![];
         let label_df: Vec<HashMap<String, String>> = vec![make_label_row(&[("a", "1")])];
-        let X = build_factor_activation(&label_df, &factors);
-        assert_eq!(X.dim(), (1, 0));
+        let x_matrix = build_factor_activation(&label_df, &factors);
+        assert_eq!(x_matrix.dim(), (1, 0));
     }
 
     #[test]
@@ -787,10 +796,10 @@ mod tests {
             make_label_row(&[("a", "low")]),
             make_label_row(&[("a", "high")]),
         ];
-        let X = build_factor_activation(&label_df, &[factor]);
-        assert_eq!(X[[0, 0]], 1.0);
-        assert_eq!(X[[1, 0]], 0.0);
-        assert_eq!(X[[2, 0]], 1.0);
+        let x_matrix = build_factor_activation(&label_df, &[factor]);
+        assert_eq!(x_matrix[[0, 0]], 1.0);
+        assert_eq!(x_matrix[[1, 0]], 0.0);
+        assert_eq!(x_matrix[[2, 0]], 1.0);
     }
 
     #[test]
@@ -800,10 +809,21 @@ mod tests {
             name: "f1".to_string(),
             semantics: "f1".to_string(),
             items: vec!["a=high".to_string(), "b=near".to_string()],
-            support_event: 0.5, support_background: 0.1, relative_risk: 5.0, stability: 1.0,
-            score: 1.0, count_event: 50, count_background: 10, n_event: 100, n_background: 100,
-            rr_ci_lower: 2.0, rr_ci_upper: 10.0, p_value: 0.01, fdr_significant: true,
-            likelihood_ratio: 5.0, true_relative_risk: 5.0,
+            support_event: 0.5,
+            support_background: 0.1,
+            relative_risk: 5.0,
+            stability: 1.0,
+            score: 1.0,
+            count_event: 50,
+            count_background: 10,
+            n_event: 100,
+            n_background: 100,
+            rr_ci_lower: 2.0,
+            rr_ci_upper: 10.0,
+            p_value: 0.01,
+            fdr_significant: true,
+            likelihood_ratio: 5.0,
+            true_relative_risk: 5.0,
         };
 
         let label_df = vec![
@@ -811,18 +831,18 @@ mod tests {
             make_label_row(&[("a", "high"), ("b", "far")]),
             make_label_row(&[("a", "low"), ("b", "near")]),
         ];
-        let X = build_factor_activation(&label_df, &[f1]);
-        assert_eq!(X[[0, 0]], 1.0, "Both conditions met");
-        assert_eq!(X[[1, 0]], 0.0, "b is far");
-        assert_eq!(X[[2, 0]], 0.0, "a is low");
+        let x_matrix = build_factor_activation(&label_df, &[f1]);
+        assert_eq!(x_matrix[[0, 0]], 1.0, "Both conditions met");
+        assert_eq!(x_matrix[[1, 0]], 0.0, "b is far");
+        assert_eq!(x_matrix[[2, 0]], 0.0, "a is low");
     }
 
     #[test]
     fn test_logistic_binary_perfect_separation() {
         // Simple separable data
-        let X = Array2::from_shape_vec((4, 1), vec![0.0, 0.0, 1.0, 1.0]).unwrap();
+        let x_matrix = Array2::from_shape_vec((4, 1), vec![0.0, 0.0, 1.0, 1.0]).unwrap();
         let y = vec![0.0, 0.0, 1.0, 1.0];
-        let (w, _intercept) = fit_logistic_binary_internal(&X, &y, None, 50, 1.0);
+        let (w, _intercept) = fit_logistic_binary_internal(&x_matrix, &y, None, 50, 1.0);
         assert!(!w.is_empty());
         // Just verify no NaN
         assert!(w[0].is_finite());
@@ -835,10 +855,21 @@ mod tests {
             name: "test".to_string(),
             semantics: "test".to_string(),
             items: vec!["a=high".to_string()],
-            support_event: 0.5, support_background: 0.1, relative_risk: 5.0, stability: 1.0,
-            score: 1.0, count_event: 5, count_background: 1, n_event: 10, n_background: 10,
-            rr_ci_lower: 2.0, rr_ci_upper: 10.0, p_value: 0.01, fdr_significant: true,
-            likelihood_ratio: 5.0, true_relative_risk: 5.0,
+            support_event: 0.5,
+            support_background: 0.1,
+            relative_risk: 5.0,
+            stability: 1.0,
+            score: 1.0,
+            count_event: 5,
+            count_background: 1,
+            n_event: 10,
+            n_background: 10,
+            rr_ci_lower: 2.0,
+            rr_ci_upper: 10.0,
+            p_value: 0.01,
+            fdr_significant: true,
+            likelihood_ratio: 5.0,
+            true_relative_risk: 5.0,
         };
 
         let label_df = vec![
@@ -852,7 +883,7 @@ mod tests {
         let target = vec![1.0, 1.0, 0.0, 0.0, 0.0, 0.0];
 
         let mut engine = OccurrenceProbabilityEngine::new();
-        engine.fit(&label_df, &target, &[factor.clone()], 42);
+        engine.fit(&label_df, &target, std::slice::from_ref(&factor), 42);
 
         assert_eq!(engine.backend, "logistic_regression");
         assert_eq!(engine.factor_ids, vec!["F1"]);
@@ -860,10 +891,13 @@ mod tests {
         let probs = engine.predict_proba(&label_df, &[factor]);
         assert_eq!(probs.len(), 6);
         for &p in &probs {
-            assert!(p >= 0.0 && p <= 1.0, "Probability {} out of range", p);
+            assert!((0.0..=1.0).contains(&p), "Probability {} out of range", p);
         }
         // High activation should give higher probability
-        assert!(probs[0] > probs[2], "a=high should have higher prob than a=low");
+        assert!(
+            probs[0] > probs[2],
+            "a=high should have higher prob than a=low"
+        );
     }
 
     #[test]
@@ -873,10 +907,21 @@ mod tests {
             name: "test".to_string(),
             semantics: "test".to_string(),
             items: vec!["a=high".to_string()],
-            support_event: 0.5, support_background: 0.1, relative_risk: 5.0, stability: 1.0,
-            score: 1.0, count_event: 10, count_background: 0, n_event: 10, n_background: 10,
-            rr_ci_lower: 2.0, rr_ci_upper: 10.0, p_value: 0.01, fdr_significant: true,
-            likelihood_ratio: 5.0, true_relative_risk: 5.0,
+            support_event: 0.5,
+            support_background: 0.1,
+            relative_risk: 5.0,
+            stability: 1.0,
+            score: 1.0,
+            count_event: 10,
+            count_background: 0,
+            n_event: 10,
+            n_background: 10,
+            rr_ci_lower: 2.0,
+            rr_ci_upper: 10.0,
+            p_value: 0.01,
+            fdr_significant: true,
+            likelihood_ratio: 5.0,
+            true_relative_risk: 5.0,
         };
 
         let label_df = vec![
@@ -887,7 +932,7 @@ mod tests {
         let target = vec![1.0, 1.0];
 
         let mut engine = OccurrenceProbabilityEngine::new();
-        engine.fit(&label_df, &target, &[factor.clone()], 42);
+        engine.fit(&label_df, &target, std::slice::from_ref(&factor), 42);
 
         // Should use fallback, not panic
         assert!(engine.backend.contains("fallback"));
@@ -895,7 +940,7 @@ mod tests {
         let probs = engine.predict_proba(&label_df, &[factor]);
         assert_eq!(probs.len(), 2);
         for &p in &probs {
-            assert!(p >= 0.0 && p <= 1.0);
+            (0.0..=1.0).contains(&p);
         }
     }
 
@@ -906,10 +951,21 @@ mod tests {
             name: "test".to_string(),
             semantics: "test".to_string(),
             items: vec!["a=high".to_string()],
-            support_event: 0.5, support_background: 0.1, relative_risk: 5.0, stability: 1.0,
-            score: 1.0, count_event: 5, count_background: 1, n_event: 10, n_background: 10,
-            rr_ci_lower: 2.0, rr_ci_upper: 10.0, p_value: 0.01, fdr_significant: true,
-            likelihood_ratio: 5.0, true_relative_risk: 5.0,
+            support_event: 0.5,
+            support_background: 0.1,
+            relative_risk: 5.0,
+            stability: 1.0,
+            score: 1.0,
+            count_event: 5,
+            count_background: 1,
+            n_event: 10,
+            n_background: 10,
+            rr_ci_lower: 2.0,
+            rr_ci_upper: 10.0,
+            p_value: 0.01,
+            fdr_significant: true,
+            likelihood_ratio: 5.0,
+            true_relative_risk: 5.0,
         };
 
         // 6 samples, all valid classes
@@ -928,7 +984,13 @@ mod tests {
         let class_mask: Vec<usize> = (0..6).collect();
 
         let mut engine = DisturbanceClassEngine::new();
-        engine.fit(&label_df, &class_values, &class_mask, &[factor.clone()], 42);
+        engine.fit(
+            &label_df,
+            &class_values,
+            &class_mask,
+            std::slice::from_ref(&factor),
+            42,
+        );
 
         assert_eq!(engine.backend, "multinomial_logistic");
         assert!(!engine.classes.is_empty());
@@ -937,7 +999,11 @@ mod tests {
         assert_eq!(probs.len(), 6);
         for row in &probs {
             let sum: f64 = row.iter().map(|(_, p)| p).sum();
-            assert!((sum - 1.0).abs() < 1e-5, "Probs should sum to 1, got {}", sum);
+            assert!(
+                (sum - 1.0).abs() < 1e-5,
+                "Probs should sum to 1, got {}",
+                sum
+            );
         }
     }
 
@@ -948,10 +1014,21 @@ mod tests {
             name: "test".to_string(),
             semantics: "test".to_string(),
             items: vec!["a=high".to_string()],
-            support_event: 0.5, support_background: 0.1, relative_risk: 5.0, stability: 1.0,
-            score: 1.0, count_event: 10, count_background: 0, n_event: 10, n_background: 10,
-            rr_ci_lower: 2.0, rr_ci_upper: 10.0, p_value: 0.01, fdr_significant: true,
-            likelihood_ratio: 5.0, true_relative_risk: 5.0,
+            support_event: 0.5,
+            support_background: 0.1,
+            relative_risk: 5.0,
+            stability: 1.0,
+            score: 1.0,
+            count_event: 10,
+            count_background: 0,
+            n_event: 10,
+            n_background: 10,
+            rr_ci_lower: 2.0,
+            rr_ci_upper: 10.0,
+            p_value: 0.01,
+            fdr_significant: true,
+            likelihood_ratio: 5.0,
+            true_relative_risk: 5.0,
         };
 
         let label_df = vec![
@@ -962,7 +1039,13 @@ mod tests {
         let class_mask: Vec<usize> = (0..2).collect();
 
         let mut engine = DisturbanceClassEngine::new();
-        engine.fit(&label_df, &class_values, &class_mask, &[factor.clone()], 42);
+        engine.fit(
+            &label_df,
+            &class_values,
+            &class_mask,
+            std::slice::from_ref(&factor),
+            42,
+        );
 
         // Should use fallback
         assert!(engine.backend.contains("fallback"));
@@ -984,10 +1067,21 @@ mod tests {
             name: "test".to_string(),
             semantics: "test".to_string(),
             items: vec!["a=high".to_string()],
-            support_event: 0.5, support_background: 0.5, relative_risk: 1.0, stability: 1.0,
-            score: 0.0, count_event: 1, count_background: 1, n_event: 2, n_background: 2,
-            rr_ci_lower: 0.0, rr_ci_upper: 0.0, p_value: 1.0, fdr_significant: false,
-            likelihood_ratio: 1.0, true_relative_risk: 1.0,
+            support_event: 0.5,
+            support_background: 0.5,
+            relative_risk: 1.0,
+            stability: 1.0,
+            score: 0.0,
+            count_event: 1,
+            count_background: 1,
+            n_event: 2,
+            n_background: 2,
+            rr_ci_lower: 0.0,
+            rr_ci_upper: 0.0,
+            p_value: 1.0,
+            fdr_significant: false,
+            likelihood_ratio: 1.0,
+            true_relative_risk: 1.0,
         };
 
         let label_df = vec![
@@ -997,12 +1091,12 @@ mod tests {
         let target = vec![1.0, 0.0];
 
         let mut engine = OccurrenceProbabilityEngine::new();
-        engine.fit(&label_df, &target, &[factor.clone()], 42);
+        engine.fit(&label_df, &target, std::slice::from_ref(&factor), 42);
         // Should not panic even with very few rows
         let probs = engine.predict_proba(&label_df, &[factor]);
         assert_eq!(probs.len(), 2);
         for &p in &probs {
-            assert!(p >= 0.0 && p <= 1.0);
+            (0.0..=1.0).contains(&p);
         }
     }
 }

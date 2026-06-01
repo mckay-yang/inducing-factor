@@ -53,10 +53,7 @@ impl FeatureBuilder {
         }
     }
 
-    fn previous_year_month<'a>(
-        df: &'a DataFrame,
-        month: usize,
-    ) -> PolarsResult<Vec<Option<f64>>> {
+    fn previous_year_month(df: &DataFrame, month: usize) -> PolarsResult<Vec<Option<f64>>> {
         let col_name = format!("rainfall_month_{:02}", month);
         let c = df.column(&col_name)?;
         let s = c.as_materialized_series();
@@ -100,7 +97,8 @@ impl FeatureBuilder {
         for month in 1..=12 {
             let col_name = format!("rainfall_month_{:02}", month);
             if let Ok(c) = df.column(&col_name) {
-                let vals: Vec<Option<f64>> = c.as_materialized_series().f64()?.into_iter().collect();
+                let vals: Vec<Option<f64>> =
+                    c.as_materialized_series().f64()?.into_iter().collect();
                 month_values.insert(month, vals);
             }
         }
@@ -126,10 +124,16 @@ impl FeatureBuilder {
                 let source_month = m as i32 - offset as i32;
                 if source_month >= 1 {
                     let sm = source_month as usize;
-                    month_values.get(&sm).and_then(|vals| vals.get(i).copied()).flatten()
+                    month_values
+                        .get(&sm)
+                        .and_then(|vals| vals.get(i).copied())
+                        .flatten()
                 } else {
                     let sm = (source_month + 12) as usize;
-                    prev_year_vals.get(&sm).and_then(|vals| vals.get(i).copied()).flatten()
+                    prev_year_vals
+                        .get(&sm)
+                        .and_then(|vals| vals.get(i).copied())
+                        .flatten()
                 }
             };
 
@@ -144,7 +148,11 @@ impl FeatureBuilder {
             .zip(prev_3.iter())
             .map(|((a, b), c)| {
                 let sum = a.unwrap_or(0.0) + b.unwrap_or(0.0) + c.unwrap_or(0.0);
-                if a.is_some() || b.is_some() || c.is_some() { Some(sum) } else { None }
+                if a.is_some() || b.is_some() || c.is_some() {
+                    Some(sum)
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -226,7 +234,11 @@ impl FeatureBuilder {
         Ok(feature_lags)
     }
 
-    pub fn shift_by_groups_vec(vals: &[Option<f64>], point_id_s: &Series, lag: usize) -> Vec<Option<f64>> {
+    pub fn shift_by_groups_vec(
+        vals: &[Option<f64>],
+        point_id_s: &Series,
+        lag: usize,
+    ) -> Vec<Option<f64>> {
         let n = vals.len();
         let mut shifted = vec![None; n];
         let ids: Vec<Option<i64>> = point_id_s.i64().unwrap().into_iter().collect();
@@ -307,10 +319,8 @@ impl FeatureBuilder {
         for indices in groups.values() {
             for (j, &idx) in indices.iter().enumerate() {
                 let start = j.saturating_sub(window - 1);
-                let win_vals: Vec<f64> = indices[start..=j]
-                    .iter()
-                    .filter_map(|&i| vals[i])
-                    .collect();
+                let win_vals: Vec<f64> =
+                    indices[start..=j].iter().filter_map(|&i| vals[i]).collect();
                 if win_vals.len() >= window {
                     result[idx] = match agg {
                         "mean" => {
@@ -337,10 +347,7 @@ impl FeatureBuilder {
     ) -> PolarsResult<(DataFrame, Vec<String>)> {
         let mut df = df_chunk
             .clone()
-            .sort(
-                ["point_id", "year"],
-                SortMultipleOptions::default(),
-            )?;
+            .sort(["point_id", "year"], SortMultipleOptions::default())?;
 
         if df.column("disturbance_flag").is_ok() {
             let c = df.column("disturbance_flag")?;

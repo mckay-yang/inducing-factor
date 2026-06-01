@@ -41,6 +41,7 @@ fn setup_logging() {
         .init();
 }
 
+#[allow(clippy::type_complexity)]
 fn generate_synthetic_points(
     start_year: i32,
     end_year: i32,
@@ -97,16 +98,21 @@ fn generate_synthetic_points(
         }
     }
 
-    (points, features, dist_flags, dist_classes, dist_months, rainfall)
+    (
+        points,
+        features,
+        dist_flags,
+        dist_classes,
+        dist_months,
+        rainfall,
+    )
 }
 
 fn stage_header(stage: &str, phase: usize, total: usize, description: &str) {
-    info!(
-        "[{}][phase {}/{}] {}",
-        stage, phase, total, description
-    );
+    info!("[{}][phase {}/{}] {}", stage, phase, total, description);
 }
 
+#[allow(clippy::type_complexity)]
 pub fn run_pipeline(config_path: &Path, workers: Option<usize>, dry_run: bool) {
     setup_logging();
     let start_time = Instant::now();
@@ -191,11 +197,7 @@ pub fn run_pipeline(config_path: &Path, workers: Option<usize>, dry_run: bool) {
                         .column("disturbance_flag")
                         .ok()
                         .and_then(|c| c.i32().ok())
-                        .map(|s| {
-                            s.into_iter()
-                                .filter(|v| v.map_or(false, |x| x == 1))
-                                .count()
-                        })
+                        .map(|s| s.into_iter().filter(|v| v.is_some_and(|x| x == 1)).count())
                         .unwrap_or(0);
                     audits.push(ChunkAudit {
                         chunk_idx: i,
@@ -233,11 +235,7 @@ pub fn run_pipeline(config_path: &Path, workers: Option<usize>, dry_run: bool) {
     let ok_count = audits.iter().filter(|a| a.status == "ok").count();
     let total_pts: usize = audits.iter().map(|a| a.point_count).sum();
     let total_dist: usize = audits.iter().map(|a| a.disturbance_count).sum();
-    let pct = if total_chunks > 0 {
-        ok_count * 100 / total_chunks
-    } else {
-        100
-    };
+    let pct = total_chunks.checked_mul(100).map_or(100, |p| p / ok_count);
 
     info!(
         "[pipeline] Pipeline complete {} / {} ({}%) elapsed={:.2?} eta=0s",
@@ -278,7 +276,7 @@ pub fn run_train(config_path: &Path, output_dir: Option<&Path>) {
             .filter_map(|e| {
                 let e = e.ok()?;
                 let p = e.path();
-                if p.extension().map_or(false, |ext| ext == "parquet") {
+                if p.extension().is_some_and(|ext| ext == "parquet") {
                     Some(p)
                 } else {
                     None
@@ -344,7 +342,7 @@ pub fn run_train(config_path: &Path, output_dir: Option<&Path>) {
     };
     let mut discretizer = AdaptiveDiscretizer::new(disc_config);
 
-    let feature_names: Vec<String> = vec![
+    let feature_names: Vec<String> = [
         "slope",
         "aspect",
         "dist_to_river",
@@ -394,10 +392,7 @@ pub fn run_train(config_path: &Path, output_dir: Option<&Path>) {
 
     if !feature_data.is_empty() {
         discretizer.fit(&feature_names, &feature_data, &targets);
-        info!(
-            "[train] Discretizer fit on {} samples",
-            feature_data.len()
-        );
+        info!("[train] Discretizer fit on {} samples", feature_data.len());
     } else {
         warn!("[train] No samples for discretizer; using defaults.");
     }
@@ -519,7 +514,7 @@ pub fn run_train(config_path: &Path, output_dir: Option<&Path>) {
                             .ok()
                             .and_then(|c| c.i32().ok())
                             .and_then(|s| s.get(i))
-                            .map_or(false, |v| v == 1)
+                            .is_some_and(|v| v == 1)
                     })
                     .collect::<Vec<usize>>()
             })
@@ -668,11 +663,7 @@ pub fn run_predict(config_path: &Path, year: Option<i32>, workers: Option<usize>
 
         if let (Some(cols), Some(rows), Some(probs)) = (raster_col, raster_row, prob_col) {
             for i in 0..df.height() {
-                if let (Some(c), Some(r), Some(p)) = (
-                    cols.get(i),
-                    rows.get(i),
-                    probs.get(i),
-                ) {
+                if let (Some(c), Some(r), Some(p)) = (cols.get(i), rows.get(i), probs.get(i)) {
                     let idx = r as usize * w + c as usize;
                     if idx < prob_raster.len() {
                         prob_raster[idx] = p as f32;
@@ -696,8 +687,7 @@ pub fn run_predict(config_path: &Path, year: Option<i32>, workers: Option<usize>
     )
     .ok();
 
-    let prob_arr =
-        ndarray::Array2::from_shape_vec((h, w), prob_raster.clone()).unwrap_or_default();
+    let prob_arr = ndarray::Array2::from_shape_vec((h, w), prob_raster.clone()).unwrap_or_default();
     let flat: Vec<f32> = prob_arr.iter().copied().collect();
     std::fs::write(
         output_dir.join(format!("disturbance_probability_{}.npy", target_year)),

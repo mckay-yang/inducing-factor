@@ -35,9 +35,7 @@ impl AdaptiveDiscretizer {
     }
 
     fn fit_feature(&self, name: &str, series: &[f64], y: &[f64]) -> FeatureMeta {
-        let non_null: Vec<usize> = (0..series.len())
-            .filter(|&i| !series[i].is_nan())
-            .collect();
+        let non_null: Vec<usize> = (0..series.len()).filter(|&i| !series[i].is_nan()).collect();
 
         if non_null.is_empty() {
             return FeatureMeta {
@@ -130,13 +128,7 @@ impl AdaptiveDiscretizer {
         tree_splits(&vals, &lbls, max_leaf_nodes, min_leaf)
     }
 
-    fn fit_mdlp(
-        &self,
-        series: &[f64],
-        y: &[f64],
-        mask: &[usize],
-        min_leaf: usize,
-    ) -> Vec<f64> {
+    fn fit_mdlp(&self, series: &[f64], y: &[f64], mask: &[usize], min_leaf: usize) -> Vec<f64> {
         let vals: Vec<f64> = mask.iter().map(|&i| series[i]).collect();
         let lbls: Vec<i64> = mask.iter().map(|&i| y[i] as i64).collect();
         if vals.len() < 4 {
@@ -146,7 +138,7 @@ impl AdaptiveDiscretizer {
         let mut cuts = Vec::new();
         mdlp_find_cuts(&vals, &lbls, 0, 6, min_leaf, &mut cuts);
 
-        let mut thresholds: Vec<f64> = cuts.iter().copied().collect();
+        let mut thresholds: Vec<f64> = cuts.to_vec();
         thresholds.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         thresholds
     }
@@ -268,8 +260,8 @@ fn tree_splits(vals: &[f64], lbls: &[i64], max_leaf_nodes: usize, min_leaf: usiz
 
     let mut left_idx = Vec::new();
     let mut right_idx = Vec::new();
-    for i in 0..n {
-        if vals[i] <= t1 {
+    for (i, v) in vals.iter().enumerate() {
+        if *v <= t1 {
             left_idx.push(i);
         } else {
             right_idx.push(i);
@@ -312,14 +304,23 @@ fn tree_splits(vals: &[f64], lbls: &[i64], max_leaf_nodes: usize, min_leaf: usiz
     thresholds
 }
 
-fn find_best_split(vals: &[f64], lbls: &[i64], min_leaf: usize, parent_h: f64) -> Option<(f64, f64)> {
+fn find_best_split(
+    vals: &[f64],
+    lbls: &[i64],
+    min_leaf: usize,
+    parent_h: f64,
+) -> Option<(f64, f64)> {
     let n = vals.len();
     if n < min_leaf * 2 {
         return None;
     }
 
     let mut idx: Vec<usize> = (0..n).collect();
-    idx.sort_by(|&a, &b| vals[a].partial_cmp(&vals[b]).unwrap_or(std::cmp::Ordering::Equal));
+    idx.sort_by(|&a, &b| {
+        vals[a]
+            .partial_cmp(&vals[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let sorted_vals: Vec<f64> = idx.iter().map(|&i| vals[i]).collect();
     let sorted_lbls: Vec<i64> = idx.iter().map(|&i| lbls[i]).collect();
@@ -375,13 +376,16 @@ fn find_best_split(vals: &[f64], lbls: &[i64], min_leaf: usize, parent_h: f64) -
         let h_left = entropy(&left_lbls);
         let h_right = entropy(&right_lbls);
         let weighted_ent = (n_left as f64 * h_left + n_right as f64 * h_right) / n as f64;
-        let impurity_decrease = n as f64 * parent_h - n_left as f64 * h_left - n_right as f64 * h_right;
+        let impurity_decrease =
+            n as f64 * parent_h - n_left as f64 * h_left - n_right as f64 * h_right;
 
         if impurity_decrease > best_impurity_decrease + 1e-12 {
             best_impurity_decrease = impurity_decrease;
             best_weighted_entropy = weighted_ent;
             best_threshold = Some(mid);
-        } else if (impurity_decrease - best_impurity_decrease).abs() < 1e-12 && weighted_ent < best_weighted_entropy {
+        } else if (impurity_decrease - best_impurity_decrease).abs() < 1e-12
+            && weighted_ent < best_weighted_entropy
+        {
             best_weighted_entropy = weighted_ent;
             best_threshold = Some(mid);
         }
@@ -408,7 +412,11 @@ fn mdlp_find_cuts(
     }
 
     let mut idx: Vec<usize> = (0..vals.len()).collect();
-    idx.sort_by(|&a, &b| vals[a].partial_cmp(&vals[b]).unwrap_or(std::cmp::Ordering::Equal));
+    idx.sort_by(|&a, &b| {
+        vals[a]
+            .partial_cmp(&vals[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let sorted_vals: Vec<f64> = idx.iter().map(|&i| vals[i]).collect();
     let sorted_lbls: Vec<i64> = idx.iter().map(|&i| lbls[i]).collect();
@@ -481,7 +489,14 @@ fn mdlp_find_cuts(
         let right_lbls: Vec<i64> = right_mask.iter().map(|&i| lbls[i]).collect();
 
         mdlp_find_cuts(&left_vals, &left_lbls, depth + 1, max_depth, min_leaf, cuts);
-        mdlp_find_cuts(&right_vals, &right_lbls, depth + 1, max_depth, min_leaf, cuts);
+        mdlp_find_cuts(
+            &right_vals,
+            &right_lbls,
+            depth + 1,
+            max_depth,
+            min_leaf,
+            cuts,
+        );
     }
 }
 
@@ -506,18 +521,14 @@ fn mdlp_accept(vals: &[f64], lbls: &[i64], threshold: f64, _min_leaf: usize) -> 
     let h_right = entropy(&right_lbls);
 
     let n = vals.len() as f64;
-    let info_gain = parent_h
-        - (n_left as f64 / n) * h_left
-        - (n_right as f64 / n) * h_right;
+    let info_gain = parent_h - (n_left as f64 / n) * h_left - (n_right as f64 / n) * h_right;
 
     let k = count_unique_i64(lbls) as f64;
     let k_left = count_unique_i64(&left_lbls) as f64;
     let k_right = count_unique_i64(&right_lbls) as f64;
 
-    let delta = libm::log2(3.0_f64.powf(k) - 2.0)
-        - k * parent_h
-        + k_left * h_left
-        + k_right * h_right;
+    let delta =
+        libm::log2(3.0_f64.powf(k) - 2.0) - k * parent_h + k_left * h_left + k_right * h_right;
 
     info_gain > (libm::log2(n - 1.0) / n + delta / n)
 }
@@ -526,8 +537,8 @@ fn find_bin(val: f64, bins: &[f64]) -> usize {
     if val.is_nan() {
         return bins.len();
     }
-    for i in 1..bins.len() {
-        if val <= bins[i] {
+    for (i, b) in bins.iter().enumerate().skip(1) {
+        if val <= *b {
             return i - 1;
         }
     }
@@ -540,7 +551,10 @@ fn category_index(val: f64, categories: &[String]) -> usize {
     } else {
         format!("{}", val)
     };
-    categories.iter().position(|c| c == &val_str).unwrap_or(categories.len())
+    categories
+        .iter()
+        .position(|c| c == &val_str)
+        .unwrap_or(categories.len())
 }
 
 fn count_unique_f64(vals: &[f64]) -> usize {
@@ -671,8 +685,10 @@ mod tests {
 
     #[test]
     fn test_discretizer_single_value() {
-        let mut config = DiscretizerConfig::default();
-        config.categorical_unique_threshold = 12;
+        let config = DiscretizerConfig {
+            categorical_unique_threshold: 12,
+            ..DiscretizerConfig::default()
+        };
         let mut disc = AdaptiveDiscretizer::new(config);
         let features: Vec<String> = vec!["f1".to_string()];
         let data: Vec<Vec<f64>> = (0..10).map(|_| vec![5.0]).collect();
@@ -684,8 +700,10 @@ mod tests {
 
     #[test]
     fn test_discretizer_categorical_threshold() {
-        let mut config = DiscretizerConfig::default();
-        config.categorical_unique_threshold = 12;
+        let config = DiscretizerConfig {
+            categorical_unique_threshold: 12,
+            ..DiscretizerConfig::default()
+        };
         let mut disc = AdaptiveDiscretizer::new(config);
         let features: Vec<String> = vec!["landuse".to_string()];
         let data: Vec<Vec<f64>> = vec![vec![1.0], vec![2.0], vec![1.0], vec![2.0]];

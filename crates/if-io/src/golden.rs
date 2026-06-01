@@ -300,7 +300,7 @@ pub fn compare_probabilities(
     let mut sum_abs_err = 0.0f64;
     let mut max_err = 0.0f64;
 
-    for (_i, (a, g)) in actual.iter().zip(golden.iter()).enumerate() {
+    for (a, g) in actual.iter().zip(golden.iter()) {
         let abs_err = (a.disturbance_probability - g.disturbance_probability).abs();
         sum_abs_err += abs_err;
         if abs_err > max_err {
@@ -402,7 +402,9 @@ fn normal_sf(x: f64) -> f64 {
     let b5 = 1.330274429;
     let t = 1.0 / (1.0 + p * x);
     let pdf = (-0.5 * x * x).exp() / (2.0 * std::f64::consts::PI).sqrt();
-    let cdf = 1.0 - pdf * (b1 * t + b2 * t * t + b3 * t * t * t + b4 * t * t * t * t + b5 * t * t * t * t * t);
+    let cdf = 1.0
+        - pdf
+            * (b1 * t + b2 * t * t + b3 * t * t * t + b4 * t * t * t * t + b5 * t * t * t * t * t);
     // sf = 1 - cdf ≈ upper tail
     (1.0 - cdf).max(0.0)
 }

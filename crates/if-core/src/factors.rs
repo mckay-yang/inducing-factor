@@ -35,16 +35,13 @@ impl FactorMiner {
             .collect()
     }
 
-    pub fn count_patterns(
-        &self,
-        transactions: &[Vec<String>],
-    ) -> HashMap<Vec<String>, usize> {
+    pub fn count_patterns(&self, transactions: &[Vec<String>]) -> HashMap<Vec<String>, usize> {
         let mut counts: HashMap<Vec<String>, usize> = HashMap::new();
         for items in transactions {
             let max_len = self.config.max_pattern_size.min(items.len());
             for size in 1..=max_len {
                 for combo in items.iter().combinations(size) {
-                    let pattern: Vec<String> = combo.iter().map(|&&ref s| s.clone()).collect();
+                    let pattern: Vec<String> = combo.iter().map(|s| (*s).clone()).collect();
                     *counts.entry(pattern).or_insert(0) += 1;
                 }
             }
@@ -78,8 +75,7 @@ impl FactorMiner {
             let count_bg = background_counts.get(pattern).copied().unwrap_or(0);
             let support_event = *count_event as f64 / n_event as f64;
             let support_background = count_bg as f64 / n_bg as f64;
-            let relative_risk =
-                (support_event + epsilon) / (support_background + epsilon);
+            let relative_risk = (support_event + epsilon) / (support_background + epsilon);
 
             if relative_risk < self.config.min_relative_risk {
                 continue;
@@ -220,13 +216,9 @@ impl FactorMiner {
                             .filter(|(i, _)| *i != drop_idx)
                             .map(|(_, s)| s.clone())
                             .collect();
-                        if stable_patterns.contains_key(&subset)
-                            && !to_remove.contains(&subset)
-                        {
+                        if stable_patterns.contains_key(&subset) && !to_remove.contains(&subset) {
                             let rr_subset = stable_patterns[&subset].relative_risk;
-                            if (rr_pattern - rr_subset).abs()
-                                < redundancy_threshold * rr_subset
-                            {
+                            if (rr_pattern - rr_subset).abs() < redundancy_threshold * rr_subset {
                                 to_remove.insert(pattern.clone());
                                 break;
                             }
@@ -301,7 +293,11 @@ impl FactorMiner {
             });
         }
 
-        library.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        library.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         for (idx, factor) in library.iter_mut().enumerate() {
             factor.factor_id = format!("IF_{:03}", idx + 1);
@@ -326,10 +322,7 @@ pub struct PatternStats {
 }
 
 pub fn pattern_name(pattern: &[String]) -> String {
-    pattern
-        .iter()
-        .map(|item| item.replace('=', "_"))
-        .join("__")
+    pattern.iter().map(|item| item.replace('=', "_")).join("__")
 }
 
 pub fn pattern_semantics(pattern: &[String]) -> String {
@@ -340,16 +333,16 @@ pub fn pattern_semantics(pattern: &[String]) -> String {
             if parts.len() == 2 {
                 let feature = parts[0];
                 let state = parts[1].replace('_', " ");
-                let display_feature = if feature.ends_with("_prev_mean") {
-                    format!("mean {}", &feature[..feature.len() - 10])
-                } else if feature.ends_with("_prev_max") {
-                    format!("max {}", &feature[..feature.len() - 9])
-                } else if feature.ends_with("_prev_last") {
-                    format!("last {}", &feature[..feature.len() - 10])
-                } else if feature.ends_with("_prev_sum") {
-                    format!("total {}", &feature[..feature.len() - 9])
-                } else if feature.ends_with("_prev_min") {
-                    format!("min {}", &feature[..feature.len() - 9])
+                let display_feature = if feature.strip_suffix("_prev_mean").is_some() {
+                    format!("mean {}", feature.strip_suffix("_prev_mean").unwrap())
+                } else if feature.strip_suffix("_prev_max").is_some() {
+                    format!("max {}", feature.strip_suffix("_prev_max").unwrap())
+                } else if feature.strip_suffix("_prev_last").is_some() {
+                    format!("last {}", feature.strip_suffix("_prev_last").unwrap())
+                } else if feature.strip_suffix("_prev_sum").is_some() {
+                    format!("total {}", feature.strip_suffix("_prev_sum").unwrap())
+                } else if feature.strip_suffix("_prev_min").is_some() {
+                    format!("min {}", feature.strip_suffix("_prev_min").unwrap())
                 } else {
                     feature.to_string()
                 };
@@ -410,20 +403,22 @@ mod tests {
 
     #[test]
     fn test_factor_mining_low_support() {
-        let mut config = FactorMiningConfig::default();
-        config.min_support = 0.5;
-        config.min_relative_risk = 1.0;
+        let config = FactorMiningConfig {
+            min_support: 0.5,
+            min_relative_risk: 1.0,
+            ..FactorMiningConfig::default()
+        };
         let miner = FactorMiner::new(config);
 
-        let event_tx: Vec<Vec<String>> = (0..10)
-            .map(|i| vec![format!("f1=val_{}", i % 3)])
-            .collect();
-        let bg_tx: Vec<Vec<String>> = (0..10)
-            .map(|i| vec![format!("f1=val_{}", i % 3)])
-            .collect();
+        let event_tx: Vec<Vec<String>> =
+            (0..10).map(|i| vec![format!("f1=val_{}", i % 3)]).collect();
+        let bg_tx: Vec<Vec<String>> = (0..10).map(|i| vec![format!("f1=val_{}", i % 3)]).collect();
 
         let candidates = miner.mine_pattern_candidates(&event_tx, &bg_tx);
-        assert!(candidates.is_empty(), "Expected no pattern with high min_support");
+        assert!(
+            candidates.is_empty(),
+            "Expected no pattern with high min_support"
+        );
     }
 
     #[test]

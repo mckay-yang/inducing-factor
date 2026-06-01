@@ -18,10 +18,7 @@ where
     }
 
     if worker_count <= 1 {
-        return tasks
-            .iter()
-            .map(|task| process_fn(task, 0))
-            .collect();
+        return tasks.iter().map(|task| process_fn(task, 0)).collect();
     }
 
     let pool = rayon::ThreadPoolBuilder::new()
@@ -39,12 +36,8 @@ where
             .map(|(worker_idx, task)| {
                 let result = process_fn(task, worker_idx);
                 let completed = total.fetch_add(1, Ordering::Relaxed) + 1;
-                if completed % 10 == 0 || completed == task_count {
-                    log::info!(
-                        "Chunk progress: {}/{} completed",
-                        completed,
-                        task_count
-                    );
+                if completed.is_multiple_of(10) || completed == task_count {
+                    log::info!("Chunk progress: {}/{} completed", completed, task_count);
                 }
                 result
             })
@@ -205,7 +198,11 @@ mod tests {
 
         let p = processed.lock().unwrap();
         let unique_workers: std::collections::HashSet<usize> = p.iter().map(|(_, w)| *w).collect();
-        assert!(unique_workers.len() > 1, "Expected >1 unique worker IDs, got {}", unique_workers.len());
+        assert!(
+            unique_workers.len() > 1,
+            "Expected >1 unique worker IDs, got {}",
+            unique_workers.len()
+        );
 
         assert_eq!(results.len(), 8);
         for (i, r) in results.iter().enumerate() {
@@ -217,13 +214,11 @@ mod tests {
     #[test]
     fn test_parallel_execution_empty_tasks() {
         let tasks: Vec<ChunkTask> = vec![];
-        let results = execute_chunk_tasks(&tasks, 4, |_, _| {
-            ChunkResult {
-                chunk_idx: 0,
-                saved: false,
-                cache_file: None,
-                audit: ChunkAudit::empty(0, "skip"),
-            }
+        let results = execute_chunk_tasks(&tasks, 4, |_, _| ChunkResult {
+            chunk_idx: 0,
+            saved: false,
+            cache_file: None,
+            audit: ChunkAudit::empty(0, "skip"),
         });
         assert!(results.is_empty());
     }
@@ -237,13 +232,11 @@ mod tests {
             width: 512,
             height: 512,
         }];
-        let results = execute_chunk_tasks(&tasks, 2, |task, _wid| {
-            ChunkResult {
-                chunk_idx: task.chunk_idx,
-                saved: true,
-                cache_file: None,
-                audit: ChunkAudit::empty(task.chunk_idx, "complete"),
-            }
+        let results = execute_chunk_tasks(&tasks, 2, |task, _wid| ChunkResult {
+            chunk_idx: task.chunk_idx,
+            saved: true,
+            cache_file: None,
+            audit: ChunkAudit::empty(task.chunk_idx, "complete"),
         });
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].chunk_idx, 0);
@@ -262,18 +255,13 @@ mod tests {
             })
             .collect();
 
-        let results = execute_chunk_tasks_bounded(
-            &tasks,
-            8,
-            Some(2.0),
-            1.5,
-            |task, _| ChunkResult {
+        let results =
+            execute_chunk_tasks_bounded(&tasks, 8, Some(2.0), 1.5, |task, _| ChunkResult {
                 chunk_idx: task.chunk_idx,
                 saved: true,
                 cache_file: None,
                 audit: ChunkAudit::empty(task.chunk_idx, "complete"),
-            },
-        );
+            });
 
         assert_eq!(results.len(), 4);
         assert!(results.iter().all(|r| r.saved));
@@ -291,8 +279,7 @@ mod tests {
             })
             .collect();
 
-        let skip_set: std::collections::HashSet<usize> =
-            [0, 2, 4, 6, 8].iter().copied().collect();
+        let skip_set: std::collections::HashSet<usize> = [0, 2, 4, 6, 8].iter().copied().collect();
 
         let results: Vec<ChunkResult> = tasks
             .iter()
@@ -308,13 +295,13 @@ mod tests {
                     ChunkResult {
                         chunk_idx: task.chunk_idx,
                         saved: true,
-                        cache_file: Some(
-                            std::path::PathBuf::from(format!("chunk_{}.parquet", task.chunk_idx)),
-                        ),
+                        cache_file: Some(std::path::PathBuf::from(format!(
+                            "chunk_{}.parquet",
+                            task.chunk_idx
+                        ))),
                         audit: {
                             let mut a = ChunkAudit::empty(task.chunk_idx, "complete");
-                            a.cache_file =
-                                Some(format!("chunk_{}.parquet", task.chunk_idx));
+                            a.cache_file = Some(format!("chunk_{}.parquet", task.chunk_idx));
                             a.point_count = 100;
                             a.disturbance_count = 15;
                             a.background_count = 85;
@@ -348,14 +335,20 @@ mod tests {
     #[test]
     fn test_detect_system_ram() {
         let ram = detect_system_ram_gb();
-        assert!(ram.is_some(), "should detect system RAM on all supported platforms");
+        assert!(
+            ram.is_some(),
+            "should detect system RAM on all supported platforms"
+        );
         assert!(ram.unwrap() > 0.0);
     }
 
     #[test]
     fn test_detect_available_ram() {
         let avail = detect_available_ram_gb();
-        assert!(avail.is_some(), "should detect available RAM on all supported platforms");
+        assert!(
+            avail.is_some(),
+            "should detect available RAM on all supported platforms"
+        );
         assert!(avail.unwrap() > 0.0);
     }
 
@@ -364,18 +357,17 @@ mod tests {
         let est_gb = estimate_worker_memory_gb(256, 256);
         assert!(est_gb > 0.0, "256×256 should have non-zero memory estimate");
 
-        let (count_limited, warning) = resolve_workers_with_memory_guard(
-            8, 16, est_gb,
-            Some(0.005), 0.7,
+        let (count_limited, warning) =
+            resolve_workers_with_memory_guard(8, 16, est_gb, Some(0.005), 0.7);
+        assert_eq!(
+            count_limited, 1,
+            "0.005 GB limit with {:.4} GB/worker → 1",
+            est_gb
         );
-        assert_eq!(count_limited, 1, "0.005 GB limit with {:.4} GB/worker → 1", est_gb);
         assert!(warning.is_some());
         assert!(warning.unwrap().contains("Reducing"));
 
-        let (count_unlimited, _) = resolve_workers_with_memory_guard(
-            8, 16, est_gb,
-            None, 0.7,
-        );
+        let (count_unlimited, _) = resolve_workers_with_memory_guard(8, 16, est_gb, None, 0.7);
         assert!(count_unlimited >= 1);
     }
 

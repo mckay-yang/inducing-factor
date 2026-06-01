@@ -23,10 +23,12 @@ impl CCDCLoader {
     }
 
     fn build_path(&self, year: i32) -> String {
-        let fname = self
-            .file_pattern
-            .replace("{year}", &year.to_string());
-        Path::new(&self.dir_path).join(fname).to_str().unwrap_or("").to_string()
+        let fname = self.file_pattern.replace("{year}", &year.to_string());
+        Path::new(&self.dir_path)
+            .join(fname)
+            .to_str()
+            .unwrap_or("")
+            .to_string()
     }
 
     /// Discover available years by scanning the directory for matching files.
@@ -94,11 +96,7 @@ impl CCDCLoader {
     }
 
     /// Load disturbance data as f32, with NoData values replaced by NaN.
-    pub fn load_f32(
-        &self,
-        year: i32,
-        window: &Window,
-    ) -> LoaderResult<Option<Array2<f32>>> {
+    pub fn load_f32(&self, year: i32, window: &Window) -> LoaderResult<Option<Array2<f32>>> {
         let (arr, nodata) = match self.load(year, window)? {
             Some(v) => v,
             None => return Ok(None),
