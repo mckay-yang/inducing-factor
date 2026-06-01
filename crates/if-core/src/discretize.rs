@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::stats::entropy;
 use crate::types::{DiscretizerConfig, FeatureMeta};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdaptiveDiscretizer {
     pub config: DiscretizerConfig,
     pub feature_meta: HashMap<String, FeatureMeta>,

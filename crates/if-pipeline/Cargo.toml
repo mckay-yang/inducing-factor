@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+gdal = ["dep:gdal"]
+
 [dependencies]
 # workspace
 ndarray.workspace = true
@@ -16,6 +20,7 @@ thiserror.workspace = true
 crossbeam.workspace = true
 geo.workspace = true
 rand.workspace = true
+gdal = { workspace = true, optional = true }
 
 # path dependencies
 if-config = { path = "../if-config" }
