@@ -131,3 +131,8 @@ example/
 .temp/
 .todo/
 .memo/
+.sisyphus/
+
+results/
+
+tmp/
