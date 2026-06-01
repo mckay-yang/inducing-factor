@@ -6,9 +6,28 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# workspace
 ndarray.workspace = true
 polars.workspace = true
 rayon.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 crossbeam.workspace = true
+geo.workspace = true
+rand.workspace = true
+
+# path dependencies
+if-config = { path = "../if-config" }
+if-core = { path = "../if-core" }
+if-loaders = { path = "../if-loaders" }
+if-io = { path = "../if-io" }
+
+# additional
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+uuid = { version = "1", features = ["v4"] }
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile.workspace = true
