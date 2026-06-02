@@ -1,9 +1,11 @@
+pub mod ensemble;
 pub mod execution;
 pub mod feature_builder;
 pub mod probability_mapper;
 pub mod processor;
 pub mod sampling;
 
+pub use ensemble::predict_ensemble;
 pub use execution::{
     detect_available_ram_gb, detect_system_ram_gb, estimate_worker_memory_gb, execute_chunk_tasks,
     execute_chunk_tasks_bounded, resolve_workers_with_memory_guard,

@@ -194,3 +194,29 @@ This is a Rust-native rewrite of the Python `inducing_factor` package. The Rust 
 - No Python runtime dependency
 
 The Python codebase remains in the main branch and is not modified by this worktree.
+
+## Corrected Prediction Semantics (2026-06)
+
+The original Python code contained a **reference_month leakage bug**: rainfall window
+features were computed from `disturbance_month` (a CCDC-derived label column) even at
+prediction time. This made the model appear more accurate than it actually was on
+held-out data.
+
+**Rust corrections applied** (matching the now-corrected Python reference):
+
+| Component | Correction |
+|-----------|-----------|
+| `feature_builder.rs` | `predict_month: Option<u32>` parameter; when `Some`, uses explicit month instead of requiring `reference_month` from CCDC labels |
+| `ensemble.rs` (new) | `predict_ensemble()` iterates months 1-12, aggregates mean/max/peak_month — leakage-free future-year prediction |
+| `probability_mapper.rs` | `predict_chunk_ensemble()` wraps ensemble for raster-map generation |
+
+**Prediction flow:**
+1. **Training mode** (`predict_month=None`): uses per-row `reference_month` from CCDC
+   `disturbance_month` column (valid for historical labeled data)
+2. **Prediction mode** (`predict_month=Some(m)`): uses explicit uniform month, does NOT
+   require CCDC columns — pure covariate-based prediction
+3. **Ensemble mode**: runs prediction for all 12 months, aggregates into ensemble
+   statistics (`disturbance_probability_mean`, `_max`, `_peak_month`)
+
+**Golden baselines** must be regenerated from the corrected Python pipeline
+(`scripts/generate_golden_fixtures.py`) after re-running with the updated code.

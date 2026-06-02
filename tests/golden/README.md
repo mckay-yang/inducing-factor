@@ -60,5 +60,30 @@ All fixtures are **deterministic** — same seed (42), same output every run.
 - **elevation** is intentionally excluded from factor mining (set as metadata).
 - `dist_to_road`, `dist_to_railway`, `dist_to_waterway` are dynamic (yearly) features.
 - Factor naming uses semantic labels: `dist_to_road=near`, `slope=high`, etc.
+
+## Regeneration After Corrected Semantics
+
+The golden baselines were originally generated from Python code that contained a
+**reference_month leakage bug**: the `build_rainfall_window_features` function derived
+per-row reference months from `disturbance_month` (a CCDC-derived label column) even
+at prediction time, leaking future information into features.
+
+The corrected Python pipeline now supports **prediction mode** with explicit
+`predict_month` that does NOT require CCDC columns and a **12-month ensemble**
+(`predict_ensemble`) for future-year prediction. After re-running the corrected
+Python pipeline, golden fixtures MUST be regenerated:
+
+```bash
+cd /Volumes/T7/inducing_factor
+python scripts/generate_golden_fixtures.py
+```
+
+Key changes that may shift baseline values:
+- **Temporal split**: training/validation now split by year (not random)
+- **Feature semantics**: `predict_month=None` for training (uses `reference_month`
+  from CCDC labels), `predict_month=Some(m)` for prediction (leakage-free)
+- **Ensemble prediction**: `predict_ensemble` runs 12-month iteration, aggregating
+  into `disturbance_probability_mean`, `disturbance_probability_max`,
+  `disturbance_probability_peak_month`
 - The discretizer uses `supervised_tree` method with decision tree binning.
 - Background sampling uses stratified sampling on static features.

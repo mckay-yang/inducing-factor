@@ -195,7 +195,7 @@ impl AnnualProbabilityMapper {
             return None;
         }
         let mut fb = self.feature_builder.clone();
-        let samples = if let Ok((built, _engineered_cols)) = fb.build_chunk_features(&filtered) {
+        let samples = if let Ok((built, _engineered_cols)) = fb.build_chunk_features(&filtered, None) {
             built
         } else {
             filtered
@@ -310,6 +310,43 @@ impl AnnualProbabilityMapper {
         }
         let df = dataframe_from_rows(&out_rows).ok()?;
         Some(df)
+    }
+
+    /// Run 12-month ensemble prediction on a filtered multi-year DataFrame.
+    ///
+    /// Uses `predict_ensemble` (leakage-free, explicit month for each iteration)
+    /// and returns aggregated mean/max/peak_month columns plus class probabilities.
+    pub fn predict_chunk_ensemble(&self, chunk_df: &DataFrame, year: i32) -> Option<DataFrame> {
+        let lb = self.feature_builder.lookback_years;
+        let year_series = chunk_df.column("year").ok()?.i64().ok()?;
+        let mask: Vec<bool> = year_series
+            .into_iter()
+            .map(|v| {
+                if let Some(y) = v {
+                    let y = y as i32;
+                    y >= year - lb as i32 - 1 && y <= year
+                } else {
+                    false
+                }
+            })
+            .collect();
+        let filtered = chunk_df
+            .filter(&BooleanChunked::new("mask".into(), &mask))
+            .ok()?;
+        if filtered.height() == 0 {
+            return None;
+        }
+        crate::ensemble::predict_ensemble(
+            &filtered,
+            year,
+            &self.feature_builder,
+            &self.discretizer,
+            &self.occurrence_engine,
+            &self.class_engine,
+            &self.selected_factors,
+            &self.feature_columns,
+        )
+        .ok()
     }
 
     pub fn resolve_predict_worker_count(&self) -> usize {

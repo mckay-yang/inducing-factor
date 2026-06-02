@@ -82,16 +82,36 @@ impl FeatureBuilder {
         Ok(shifted)
     }
 
-    pub fn build_rainfall_window_features(&self, df: &mut DataFrame) -> PolarsResult<()> {
-        if df.column("reference_month").is_err() {
-            return Ok(());
-        }
-
-        let ref_month_c = df.column("reference_month")?;
-        let ref_month_s = ref_month_c.as_materialized_series();
-        let ref_months: Vec<Option<f64>> = ref_month_s.f64()?.into_iter().collect();
-
+    /// Build rainfall window features (prev_1m/2m/3m, total_3m).
+    ///
+    /// In training mode (`predict_month` is None): uses per-row `reference_month`
+    /// column (derived from disturbance event labels). Each row gets a different
+    /// reference month depending on when its disturbance occurred.
+    ///
+    /// In prediction mode (`predict_month` is Some): uses the supplied month
+    /// as a uniform reference for ALL rows. This is the leakage-free path that
+    /// does NOT require any CCDC-derived columns.
+    pub fn build_rainfall_window_features(
+        &self,
+        df: &mut DataFrame,
+        predict_month: Option<u32>,
+    ) -> PolarsResult<()> {
         let n_rows = df.height();
+        let ref_months: Vec<Option<f64>>;
+
+        if let Some(pm) = predict_month {
+            // Prediction mode: broadcast uniform month to all rows
+            let pm_f = pm as f64;
+            ref_months = vec![Some(pm_f); n_rows];
+        } else {
+            // Training mode: use per-row reference_month column
+            if df.column("reference_month").is_err() {
+                return Ok(());
+            }
+            let ref_month_c = df.column("reference_month")?;
+            let ref_month_s = ref_month_c.as_materialized_series();
+            ref_months = ref_month_s.f64()?.into_iter().collect();
+        }
 
         let mut month_values: HashMap<usize, Vec<Option<f64>>> = HashMap::new();
         for month in 1..=12 {
@@ -344,6 +364,7 @@ impl FeatureBuilder {
     pub fn build_chunk_features(
         &mut self,
         df_chunk: &DataFrame,
+        predict_month: Option<u32>,
     ) -> PolarsResult<(DataFrame, Vec<String>)> {
         let mut df = df_chunk
             .clone()
@@ -356,13 +377,19 @@ impl FeatureBuilder {
             df.with_column(Column::new(name, s))?;
         }
 
-        if df.column("disturbance_month").is_ok() {
-            let c = df.column("disturbance_month")?;
-            let s = c.as_materialized_series().clone();
-            df.with_column(Column::new("reference_month".into(), s))?;
+        // In training mode (predict_month is None), derive reference_month from
+        // disturbance_month (CCDC-derived label column). In prediction mode
+        // (predict_month is Some), skip this — rainfall window features will use
+        // the explicit month instead.
+        if predict_month.is_none() {
+            if df.column("disturbance_month").is_ok() {
+                let c = df.column("disturbance_month")?;
+                let s = c.as_materialized_series().clone();
+                df.with_column(Column::new("reference_month".into(), s))?;
+            }
         }
 
-        self.build_rainfall_window_features(&mut df)?;
+        self.build_rainfall_window_features(&mut df, predict_month)?;
 
         if self.feature_window_map.is_empty() {
             self.compute_feature_lags(&df, 5)?;
@@ -501,7 +528,7 @@ mod tests {
     fn test_feature_builder_rainfall_windows() {
         let df = make_test_df();
         let mut fb = FeatureBuilder::default();
-        let (result, engineered) = fb.build_chunk_features(&df).unwrap();
+        let (result, engineered) = fb.build_chunk_features(&df, None).unwrap();
 
         assert!(result.column("rainfall_prev_1m").is_ok());
         assert!(result.column("rainfall_prev_2m").is_ok());
@@ -517,7 +544,7 @@ mod tests {
     fn test_feature_builder_rolling_history() {
         let df = make_test_df();
         let mut fb = FeatureBuilder::default();
-        let (result, engineered) = fb.build_chunk_features(&df).unwrap();
+        let (result, engineered) = fb.build_chunk_features(&df, None).unwrap();
 
         assert!(result.column("temperature_prev_last").is_ok());
         assert!(result.column("temperature_prev_mean").is_ok());
@@ -548,5 +575,107 @@ mod tests {
         assert_eq!(shifted[2], None);
         let v3 = shifted[3].unwrap_or(0.0);
         assert!((v3 - 10.0).abs() < 1e-6);
+    }
+
+    fn make_prediction_df() -> DataFrame {
+        let points: Vec<(i64, f64, f64, i32)> = vec![
+            (0, 100.0, 29.0, 2020),
+            (0, 100.0, 29.0, 2021),
+        ];
+
+        let mut features = HashMap::new();
+        features.insert("slope".into(), 10.0);
+        features.insert("aspect".into(), 90.0);
+        features.insert("dist_to_river".into(), 3000.0);
+        features.insert("dist_to_road".into(), 2000.0);
+        features.insert("dist_to_railway".into(), 5000.0);
+        features.insert("dist_to_waterway".into(), 4000.0);
+        features.insert("temperature".into(), 20.0);
+        features.insert("resident".into(), 50.0);
+        features.insert("landuse".into(), 1.0);
+
+        let rainfall = {
+            let mut hm = HashMap::new();
+            hm.insert(0_i64, (1..=12).map(|v| v as f64).collect());
+            hm
+        };
+
+        // No disturbance columns at all — pure prediction mode
+        build_chunk_dataframe(
+            &crate::processor::ChunkTask {
+                chunk_idx: 0,
+                row_off: 0,
+                col_off: 0,
+                width: 100,
+                height: 100,
+            },
+            &points,
+            &features,
+            &HashMap::new(), // no disturbance flags
+            &HashMap::new(), // no disturbance classes
+            &HashMap::new(), // no disturbance months
+            &rainfall,
+            42,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_rainfall_features_with_predict_month() {
+        let df = make_prediction_df();
+        let mut fb = FeatureBuilder::default();
+        // predict_month=3: prev_1m=Feb(2), prev_2m=Jan(1), prev_3m=Dec_prev_year
+        let (result, _engineered) = fb.build_chunk_features(&df, Some(3)).unwrap();
+
+        assert!(result.column("rainfall_prev_1m").is_ok());
+        assert!(result.column("rainfall_prev_2m").is_ok());
+        assert!(result.column("rainfall_prev_3m").is_ok());
+        assert!(result.column("rainfall_prev_total_3m").is_ok());
+
+        // With predict_month=Some, reference_month should NOT be present
+        assert!(result.column("reference_month").is_err());
+
+        // For month=3: prev_1m = rainfall_month_02 = 2.0, prev_2m = rainfall_month_01 = 1.0
+        // prev_3m = previous_year_month December (shifted from 2020 to 2021)
+        let prev1 = result.column("rainfall_prev_1m").unwrap();
+        let prev1_vals: Vec<Option<f64>> = prev1.as_materialized_series().f64().unwrap().into_iter().collect();
+        // Both rows: year 2020 and 2021, point_id=0, month=3
+        // Prev_1m = month 2 = 2.0
+        assert!((prev1_vals[0].unwrap() - 2.0).abs() < 1e-6);
+        assert!((prev1_vals[1].unwrap() - 2.0).abs() < 1e-6);
+
+        let prev2 = result.column("rainfall_prev_2m").unwrap();
+        let prev2_vals: Vec<Option<f64>> = prev2.as_materialized_series().f64().unwrap().into_iter().collect();
+        assert!((prev2_vals[0].unwrap() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_predict_mode_no_ccdc_required() {
+        let df = make_prediction_df();
+        let mut fb = FeatureBuilder::default();
+        // This DataFrame has NO disturbance_month, disturbance_flag, or disturbance_class
+        let result = fb.build_chunk_features(&df, Some(6));
+        assert!(result.is_ok());
+
+        let (built, engineered) = result.unwrap();
+        assert!(built.height() > 0);
+        assert!(engineered.contains(&"slope".to_string()));
+        assert!(engineered.contains(&"rainfall_prev_1m".to_string()));
+    }
+
+    #[test]
+    fn test_training_mode_unchanged() {
+        let df = make_test_df();
+        let mut fb = FeatureBuilder::default();
+        let (result, engineered) = fb.build_chunk_features(&df, None).unwrap();
+
+        // Training mode should still produce all expected columns
+        assert!(result.column("rainfall_prev_1m").is_ok());
+        assert!(result.column("rainfall_prev_2m").is_ok());
+        assert!(result.column("rainfall_prev_3m").is_ok());
+        assert!(result.column("rainfall_prev_total_3m").is_ok());
+        assert!(engineered.contains(&"slope".to_string()));
+        assert!(engineered.contains(&"aspect".to_string()));
+        assert!(engineered.contains(&"dist_to_river".to_string()));
     }
 }
