@@ -88,6 +88,14 @@ class AttributionConfig:
     min_count_per_class: int = 10
     class_prior_lift_threshold: float = 2.0
     top_n_per_class: int = 20
+    # Temporal validation split
+    train_end_year: Optional[int] = None  # latest year included in training (None = use all available)
+    validation_years: Optional[list[int]] = None  # explicit holdout years (None = auto: last labeled year)
+    validation_required: bool = True  # gate prediction on validation pass
+    validation_metric_thresholds: dict[str, float] = field(default_factory=lambda: {
+        "auc_min": 0.60,
+        "pr_auc_min": 0.05,
+    })
 
 
 @dataclass

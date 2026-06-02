@@ -19,13 +19,24 @@ _ABS_COL_SHORT = {1: "fire", 2: "logging", 3: "geo_hazard", 4: "road"}
 _PREDICT_WORKER_SYSTEM: EcoDisturbanceAttributionSystem | None = None
 _PREDICT_WORKER_CHUNK_FILES: tuple[str, ...] = ()
 _PREDICT_WORKER_YEAR: int | None = None
+_PREDICT_WORKER_MONTH: int = 7
+_PREDICT_WORKER_ENSEMBLE: bool = True
 
 
-def _init_predict_worker(system: EcoDisturbanceAttributionSystem, chunk_files: list[str], year: int):
+def _init_predict_worker(
+    system: EcoDisturbanceAttributionSystem,
+    chunk_files: list[str],
+    year: int,
+    predict_month: int = 7,
+    ensemble: bool = True,
+):
     global _PREDICT_WORKER_SYSTEM, _PREDICT_WORKER_CHUNK_FILES, _PREDICT_WORKER_YEAR
+    global _PREDICT_WORKER_MONTH, _PREDICT_WORKER_ENSEMBLE
     _PREDICT_WORKER_SYSTEM = system
     _PREDICT_WORKER_CHUNK_FILES = tuple(chunk_files)
     _PREDICT_WORKER_YEAR = year
+    _PREDICT_WORKER_MONTH = predict_month
+    _PREDICT_WORKER_ENSEMBLE = ensemble
 
 
 def _predict_chunk_worker(task: ChunkTask):
@@ -39,16 +50,21 @@ def _predict_chunk_worker(task: ChunkTask):
         df_chunk = df_chunk[df_chunk["year"].isin(range(target - lb - 1, target + 1))].copy()
         if df_chunk.empty:
             return task.chunk_idx, None, None
-        df_chunk_samples = _PREDICT_WORKER_SYSTEM._build_chunk_training_samples(df_chunk, skip_sampling=True)
-        if df_chunk_samples.empty:
-            return task.chunk_idx, None, None
-        df_year = df_chunk_samples[df_chunk_samples["year"] == target].copy()
-        if df_year.empty or "raster_row" not in df_year.columns or "raster_col" not in df_year.columns:
-            return task.chunk_idx, None, None
-        for col in _PREDICT_WORKER_SYSTEM.feature_columns:
-            if col not in df_year.columns:
-                df_year[col] = np.nan
-        pred = _PREDICT_WORKER_SYSTEM.predict_dataframe(df_year)
+
+        if _PREDICT_WORKER_ENSEMBLE:
+            pred = _PREDICT_WORKER_SYSTEM.predict_ensemble(df_chunk, target)
+        else:
+            df, _required_cols = _PREDICT_WORKER_SYSTEM._build_prediction_features(
+                df_chunk, predict_month=_PREDICT_WORKER_MONTH,
+            )
+            df_year = df[df["year"] == target].copy()
+            if df_year.empty or "raster_row" not in df_year.columns or "raster_col" not in df_year.columns:
+                return task.chunk_idx, None, None
+            for col in _PREDICT_WORKER_SYSTEM.feature_columns:
+                if col not in df_year.columns:
+                    df_year[col] = np.nan
+            pred = _PREDICT_WORKER_SYSTEM.predict_dataframe(df_year, predict_month=_PREDICT_WORKER_MONTH)
+
         return task.chunk_idx, pred, None
     except Exception as exc:
         return task.chunk_idx, None, exc
@@ -84,24 +100,38 @@ class AnnualProbabilityMapper:
             estimated_worker_gb=estimated_worker_gb,
         )
 
-    def _iter_year_predictions(self, chunk_files: list[str], year: int):
+    def _iter_year_predictions(
+        self,
+        chunk_files: list[str],
+        year: int,
+        predict_month: int = 7,
+        ensemble: bool = True,
+    ):
         worker_count = self._resolve_predict_worker_count()
         if worker_count <= 1:
+            lb = self.system.feature_builder.lookback_years
             for idx, npz_path in enumerate(chunk_files, start=1):
                 try:
                     df_chunk = self.system._load_chunk_dataframe(npz_path)
-                    df_chunk_samples = self.system._build_chunk_training_samples(df_chunk, skip_sampling=True)
-                    if df_chunk_samples.empty:
+                    df_chunk = df_chunk[df_chunk["year"].isin(range(year - lb - 1, year + 1))].copy()
+                    if df_chunk.empty:
                         yield idx, None, None
                         continue
-                    df_year = df_chunk_samples[df_chunk_samples["year"] == year].copy()
-                    if df_year.empty or "raster_row" not in df_year.columns or "raster_col" not in df_year.columns:
-                        yield idx, None, None
-                        continue
-                    for col in self.system.feature_columns:
-                        if col not in df_year.columns:
-                            df_year[col] = np.nan
-                    pred = self.system.predict_dataframe(df_year)
+
+                    if ensemble:
+                        pred = self.system.predict_ensemble(df_chunk, year)
+                    else:
+                        df, _required_cols = self.system._build_prediction_features(
+                            df_chunk, predict_month=predict_month,
+                        )
+                        df_year = df[df["year"] == year].copy()
+                        if df_year.empty or "raster_row" not in df_year.columns or "raster_col" not in df_year.columns:
+                            yield idx, None, None
+                            continue
+                        for col in self.system.feature_columns:
+                            if col not in df_year.columns:
+                                df_year[col] = np.nan
+                        pred = self.system.predict_dataframe(df_year, predict_month=predict_month)
                     yield idx, pred, None
                 except Exception as exc:  # pragma: no cover - defensive branch
                     yield idx, None, exc
@@ -113,12 +143,18 @@ class AnnualProbabilityMapper:
             worker_count=worker_count,
             submit_fn=_predict_chunk_worker,
             initializer=_init_predict_worker,
-            initargs=(self.system, chunk_files, year),
+            initargs=(self.system, chunk_files, year, predict_month, ensemble),
         )
         for chunk_idx, pred, exc in results:
             yield chunk_idx, pred, exc
 
-    def write_maps(self, year: int, output_dir: str | None = None) -> dict[str, str]:
+    def write_maps(
+        self,
+        year: int,
+        output_dir: str | None = None,
+        predict_month: int = 7,
+        ensemble: bool = True,
+    ) -> dict[str, str]:
         self._ensure_system()
         output_dir = output_dir or os.path.join(self.config.paths.out_dir, "probability_maps")
         os.makedirs(output_dir, exist_ok=True)
@@ -154,13 +190,22 @@ class AnnualProbabilityMapper:
             aoi_row0 = int(aoi_window.row_off)
             aoi_col0 = int(aoi_window.col_off)
 
+            class_model_available = self.system.class_engine.is_available()
+            if not class_model_available:
+                logging.getLogger("InducingFactorSystem").warning(
+                    "Class model is unavailable (status=%s). "
+                    "Only disturbance_probability map will be generated. "
+                    "No dominant_disturbance_class or class probability maps.",
+                    self.system.class_engine.model_status,
+                )
             outputs = {
                 "disturbance_probability": os.path.join(output_dir, f"disturbance_probability_{year}.tif"),
-                "dominant_disturbance_class": os.path.join(output_dir, f"dominant_disturbance_class_{year}.tif"),
             }
-            for cls in [1, 2, 3, 4]:
-                outputs[f"class_probability_{cls}"] = os.path.join(output_dir, f"class_probability_{year}_{cls}.tif")
-                outputs[f"abs_probability_{cls}"] = os.path.join(output_dir, f"prob_{CLASS_LABELS[cls]}_{year}.tif")
+            if class_model_available:
+                outputs["dominant_disturbance_class"] = os.path.join(output_dir, f"dominant_disturbance_class_{year}.tif")
+                for cls in [1, 2, 3, 4]:
+                    outputs[f"class_probability_{cls}"] = os.path.join(output_dir, f"class_probability_{year}_{cls}.tif")
+                    outputs[f"abs_probability_{cls}"] = os.path.join(output_dir, f"prob_{CLASS_LABELS[cls]}_{year}.tif")
 
             temp_dir = tempfile.mkdtemp(prefix="prob_maps_")
             temp_paths = {}
@@ -175,23 +220,28 @@ class AnnualProbabilityMapper:
             for key, path in temp_paths.items():
                 dst_handles[key] = rasterio.open(path, "w", **profile_for_key[key])
 
-            with dst_handles["disturbance_probability"] as disturbance_dst, \
-                 dst_handles["dominant_disturbance_class"] as dominant_dst, \
-                 dst_handles["class_probability_1"] as class1_dst, \
-                 dst_handles["class_probability_2"] as class2_dst, \
-                 dst_handles["class_probability_3"] as class3_dst, \
-                 dst_handles["class_probability_4"] as class4_dst, \
-                 dst_handles["abs_probability_1"] as abs_fire_dst, \
-                 dst_handles["abs_probability_2"] as abs_logging_dst, \
-                 dst_handles["abs_probability_3"] as abs_geo_dst, \
-                 dst_handles["abs_probability_4"] as abs_road_dst:
+            from contextlib import ExitStack
 
-                class_dsts = {1: class1_dst, 2: class2_dst, 3: class3_dst, 4: class4_dst}
-                abs_dsts = {1: abs_fire_dst, 2: abs_logging_dst, 3: abs_geo_dst, 4: abs_road_dst}
+            with ExitStack() as stack:
+                opened = {key: stack.enter_context(dst_handles[key]) for key in outputs}
+                disturbance_dst = opened["disturbance_probability"]
+                dominant_dst = opened.get("dominant_disturbance_class")
+                class_dsts = {
+                    cls: opened.get(f"class_probability_{cls}")
+                    for cls in [1, 2, 3, 4]
+                    if f"class_probability_{cls}" in opened
+                }
+                abs_dsts = {
+                    cls: opened.get(f"abs_probability_{cls}")
+                    for cls in [1, 2, 3, 4]
+                    if f"abs_probability_{cls}" in opened
+                }
                 chunk_files = list(self.system._iter_chunk_files())
                 progress = ProgressTracker(logging.getLogger("InducingFactorSystem"), "predict-annual-map", log_every=1)
                 progress.start_stage(1, 1, f"write maps for {year}", total=len(chunk_files))
-                for idx, pred, exc in self._iter_year_predictions(chunk_files, year):
+                for idx, pred, exc in self._iter_year_predictions(
+                    chunk_files, year, predict_month=predict_month, ensemble=ensemble,
+                ):
                     if exc is not None:
                         progress.advance(1, {"chunk": idx, "written": 0, "error": str(exc)})
                         continue
@@ -231,25 +281,29 @@ class AnnualProbabilityMapper:
                     window_out = Window(out_col0, out_row0, out_w, out_h)
                     disturbance_dst.write(disturbance_arr, 1, window=window_out)
 
-                    dominant_arr = np.zeros((out_h, out_w), dtype=np.int16)
-                    if "dominant_disturbance_class" in pred.columns:
-                        dominant_arr[out_rr[mask], out_cc[mask]] = pred["dominant_disturbance_class"].astype(int).to_numpy()[mask]
-                    dominant_dst.write(dominant_arr, 1, window=window_out)
+                    if dominant_dst is not None:
+                        dominant_arr = np.zeros((out_h, out_w), dtype=np.int16)
+                        if "dominant_disturbance_class" in pred.columns:
+                            dominant_arr[out_rr[mask], out_cc[mask]] = pred["dominant_disturbance_class"].astype(int).to_numpy()[mask]
+                        dominant_dst.write(dominant_arr, 1, window=window_out)
 
-                    for cls in [1, 2, 3, 4]:
-                        prob_col = f"class_probability_{cls}"
-                        abs_col = f"prob_{_ABS_COL_SHORT[cls]}_abs"
-                        class_arr = np.full((out_h, out_w), -9999.0, dtype=np.float32)
-                        abs_arr = np.full((out_h, out_w), -9999.0, dtype=np.float32)
-                        if prob_col in pred.columns:
-                            probs = pred[prob_col].astype(float).to_numpy()
-                            class_arr[out_rr[mask], out_cc[mask]] = probs[mask]
-                            if abs_col in pred.columns:
-                                abs_arr[out_rr[mask], out_cc[mask]] = pred[abs_col].astype(float).to_numpy()[mask]
-                            else:
-                                abs_arr[out_rr[mask], out_cc[mask]] = probs[mask] * pred["disturbance_probability"].astype(float).to_numpy()[mask]
-                        class_dsts[cls].write(class_arr, 1, window=window_out)
-                        abs_dsts[cls].write(abs_arr, 1, window=window_out)
+                    if class_dsts:
+                        for cls in class_dsts:
+                            abs_dst = abs_dsts.get(cls)
+                            prob_col = f"class_probability_{cls}"
+                            abs_col = f"prob_{_ABS_COL_SHORT[cls]}_abs"
+                            class_arr = np.full((out_h, out_w), -9999.0, dtype=np.float32)
+                            abs_arr = np.full((out_h, out_w), -9999.0, dtype=np.float32)
+                            if prob_col in pred.columns:
+                                probs = pred[prob_col].astype(float).to_numpy()
+                                class_arr[out_rr[mask], out_cc[mask]] = probs[mask]
+                                if abs_col in pred.columns:
+                                    abs_arr[out_rr[mask], out_cc[mask]] = pred[abs_col].astype(float).to_numpy()[mask]
+                                elif abs_dst is not None:
+                                    abs_arr[out_rr[mask], out_cc[mask]] = probs[mask] * pred["disturbance_probability"].astype(float).to_numpy()[mask]
+                            class_dsts[cls].write(class_arr, 1, window=window_out)
+                            if abs_dst is not None:
+                                abs_dst.write(abs_arr, 1, window=window_out)
                     progress.advance(1, {"chunk": idx, "written": len(pred)})
                 progress.finish_stage({"outputs": len(outputs)})
 

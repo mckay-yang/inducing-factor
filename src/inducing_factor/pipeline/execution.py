@@ -111,29 +111,37 @@ def execute_chunk_tasks(
         return iter(())
 
     logger.info("execute_chunk_tasks: %d tasks, %d workers", len(task_list), worker_count)
-    def _run() -> Iterator[Any]:
-        if worker_count <= 1:
-            logger.debug("execute_chunk_tasks: sequential execution")
-            if initializer is not None:
-                initializer(*initargs)
-            for task in task_list:
-                yield submit_fn(task)
-            return
 
+    if worker_count <= 1:
+        logger.debug("execute_chunk_tasks: sequential execution")
         if initializer is not None:
             initializer(*initargs)
+        for task in task_list:
+            yield submit_fn(task)
+        return
 
-        logger.info("execute_chunk_tasks: starting parallel execution with %d workers", worker_count)
-        import multiprocessing as mp
-        fork_ctx = mp.get_context("fork")
-        pool = fork_ctx.Pool(processes=worker_count)
-        try:
-            results = pool.imap_unordered(submit_fn, task_list)
-            for item in results:
-                yield item
-        finally:
-            pool.close()
-            pool.join()
-        logger.info("execute_chunk_tasks: parallel execution completed")
+    if initializer is not None:
+        initializer(*initargs)
 
-    return _run()
+    if parallel_cls is not Parallel:
+        par = parallel_cls(n_jobs=worker_count, backend="loky", prefer="processes", verbose=0)
+        jobs = [(submit_fn, (task,), {}) for task in task_list]
+        for result in par(jobs):
+            yield result
+        return
+
+    logger.info("execute_chunk_tasks: starting parallel execution with %d workers", worker_count)
+    import multiprocessing as mp
+    try:
+        ctx = mp.get_context("fork")
+    except ValueError:
+        ctx = mp.get_context("spawn")
+    pool = ctx.Pool(processes=worker_count)
+    try:
+        results = pool.imap_unordered(submit_fn, task_list)
+        for item in results:
+            yield item
+    finally:
+        pool.close()
+        pool.join()
+    logger.info("execute_chunk_tasks: parallel execution completed")

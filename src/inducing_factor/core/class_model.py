@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -7,6 +8,8 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 from inducing_factor.core.models import InducingFactor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +35,17 @@ class DisturbanceClassEngine:
             3: "geo_hazard",
             4: "road_construction",
         }
+        self.model_status: str = "untrained"
+
+    def is_available(self) -> bool:
+        """Return True if the class model can produce meaningful predictions."""
+        return self.model_status in ("trained", "fallback_single_class")
+
+    def available_classes(self) -> List[int]:
+        """Return the list of disturbance classes this model can predict."""
+        if not self.is_available():
+            return []
+        return [] if self.classes_ is None else [int(c) for c in self.classes_]
 
     def _factor_activation_frame(self, label_df: pd.DataFrame, selected_factors: List[InducingFactor]) -> pd.DataFrame:
         factor_frame = pd.DataFrame(index=label_df.index)
@@ -46,9 +60,14 @@ class DisturbanceClassEngine:
     def fit(self, label_df: pd.DataFrame, training_samples: pd.DataFrame, selected_factors: List[InducingFactor], continuous_features: pd.DataFrame = None):
         class_mask = pd.to_numeric(training_samples.get("disturbance_class"), errors="coerce").isin([1, 2, 3, 4])
         if not class_mask.any():
+            self.model_status = "unavailable"
             self.model = None
             self.classes_ = np.asarray([], dtype=int)
             self.factor_columns = []
+            logger.warning(
+                "DisturbanceClassEngine.fit: no labeled disturbance_class values (1-4) found in training data. "
+                "Class model is unavailable. Dominant disturbance class predictions will NOT be produced."
+            )
             return None
         factor_frame = self._factor_activation_frame(label_df.loc[class_mask], selected_factors)
         if continuous_features is not None:
@@ -60,8 +79,14 @@ class DisturbanceClassEngine:
         y = pd.to_numeric(training_samples.loc[class_mask, "disturbance_class"], errors="coerce").astype(int).to_numpy()
         self.classes_ = np.unique(y)
         if len(self.classes_) <= 1:
+            self.model_status = "fallback_single_class"
             prior = {int(self.classes_[0]): 1.0}
             self.model = FallbackClassModel(classes_=self.classes_.tolist(), priors=prior)
+            logger.info(
+                "DisturbanceClassEngine.fit: only one disturbance class present (%s). "
+                "Using simple prior-based fallback. model_status='fallback_single_class'.",
+                self.classes_[0],
+            )
             return self.model
         model = LogisticRegression(
             solver="lbfgs",
@@ -71,10 +96,13 @@ class DisturbanceClassEngine:
         )
         model.fit(feature_frame.to_numpy(), y)
         self.model = model
+        self.model_status = "trained"
         return self.model
 
     def predict_proba(self, label_df: pd.DataFrame, selected_factors: List[InducingFactor]) -> pd.DataFrame:
         if self.model is None:
+            if self.model_status == "unavailable":
+                logger.warning("DisturbanceClassEngine.predict_proba: class model is unavailable, returning empty DataFrame.")
             return pd.DataFrame(index=label_df.index)
         factor_frame = self._factor_activation_frame(label_df, selected_factors)
         probs = self.model.predict_proba(factor_frame.to_numpy())
@@ -119,6 +147,7 @@ class DisturbanceClassEngine:
                 "classes": [] if self.classes_ is None else [int(c) for c in self.classes_],
                 "factor_columns": self.factor_columns,
                 "class_labels": self.class_labels,
+                "model_status": self.model_status,
             },
             path,
         )
@@ -129,4 +158,5 @@ class DisturbanceClassEngine:
         self.classes_ = np.asarray(payload.get("classes", []), dtype=int)
         self.factor_columns = payload.get("factor_columns", [])
         self.class_labels = payload.get("class_labels", self.class_labels)
+        self.model_status = payload.get("model_status", "untrained")
         return self

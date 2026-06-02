@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -25,9 +25,26 @@ class FeatureBuilder:
     def _previous_year_month(self, df: pd.DataFrame, month: int) -> pd.Series:
         return df.groupby("point_id")[f"rainfall_month_{month:02d}"].shift(1)
 
-    def build_rainfall_window_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        if "reference_month" not in df.columns:
-            return df
+    def build_rainfall_window_features(
+        self, df: pd.DataFrame, predict_month: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """Build rainfall window features (prev_1m/2m/3m, total_3m).
+
+        In training mode (predict_month is None): uses per-row ``reference_month``
+        column (derived from disturbance event labels). Each row gets a different
+        reference month depending on when its disturbance occurred.
+
+        In prediction mode (predict_month is not None): uses the supplied month
+        as a uniform reference for ALL rows. This is the leakage-free path that
+        does NOT require any CCDC-derived columns.
+        """
+        if predict_month is not None:
+            reference_month = pd.Series(predict_month, index=df.index, dtype=float)
+        else:
+            if "reference_month" not in df.columns:
+                return df
+            reference_month = pd.to_numeric(df["reference_month"], errors="coerce")
+
         # Fill missing current-year rainfall data from previous year (shift(1))
         for month in range(1, 13):
             col = f"rainfall_month_{month:02d}"
@@ -39,7 +56,6 @@ class FeatureBuilder:
                 prev_vals = self._previous_year_month(df, month)
                 df.loc[nan_mask, col] = prev_vals.loc[nan_mask]
 
-        reference_month = pd.to_numeric(df["reference_month"], errors="coerce")
         month_values = {month: pd.to_numeric(df[f"rainfall_month_{month:02d}"], errors="coerce") for month in range(1, 13) if f"rainfall_month_{month:02d}" in df.columns}
         prev_year_values = {month: self._previous_year_month(df, month) for month in month_values}
         for offset in range(1, 4):
@@ -94,15 +110,31 @@ class FeatureBuilder:
             return grouped.transform(lambda s: s.shift(1).rolling(window, min_periods=window).sum())
         raise ValueError(f"Unsupported aggregation: {agg}")
 
-    def build_chunk_features(self, df_chunk: pd.DataFrame) -> tuple[pd.DataFrame, List[str]]:
+    def build_chunk_features(
+        self,
+        df_chunk: pd.DataFrame,
+        predict_month: Optional[int] = None,
+    ) -> tuple[pd.DataFrame, List[str]]:
         df = df_chunk.sort_values(["point_id", "year"]).copy()
-        if "disturbance_flag" in df.columns:
-            df[self.target] = pd.to_numeric(df["disturbance_flag"], errors="coerce").fillna(0).astype(int)
-        elif "disturbance_time_value" in df.columns:
-            df[self.target] = (pd.to_numeric(df["disturbance_time_value"], errors="coerce") > 0).astype(int)
+
+        if predict_month is not None:
+            if "disturbance_flag" in df.columns:
+                df[self.target] = pd.to_numeric(df["disturbance_flag"], errors="coerce").fillna(0).astype(int)
+            elif "disturbance_time_value" in df.columns:
+                df[self.target] = (pd.to_numeric(df["disturbance_time_value"], errors="coerce") > 0).astype(int)
+            elif "disturbance_type" in df.columns:
+                df[self.target] = (pd.to_numeric(df["disturbance_type"], errors="coerce") > 0).astype(int)
+            else:
+                df[self.target] = 0
         else:
-            df[self.target] = (pd.to_numeric(df["disturbance_type"], errors="coerce") > 0).astype(int)
-        df = self.build_rainfall_window_features(df)
+            if "disturbance_flag" in df.columns:
+                df[self.target] = pd.to_numeric(df["disturbance_flag"], errors="coerce").fillna(0).astype(int)
+            elif "disturbance_time_value" in df.columns:
+                df[self.target] = (pd.to_numeric(df["disturbance_time_value"], errors="coerce") > 0).astype(int)
+            else:
+                df[self.target] = (pd.to_numeric(df["disturbance_type"], errors="coerce") > 0).astype(int)
+
+        df = self.build_rainfall_window_features(df, predict_month=predict_month)
         if not self.feature_window_map:
             self.compute_feature_lags(df)
         engineered_features: List[str] = []

@@ -31,6 +31,13 @@ class ArtifactWriter:
         summary_path = os.path.join(self.out_dir, "factor_class_summary.csv")
         class_engine.save(model_path)
         factor_class_summary.to_csv(summary_path, index=False)
+        meta_path = os.path.join(self.out_dir, "class_model_metadata.json")
+        with open(meta_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "model_status": getattr(class_engine, "model_status", "unknown"),
+                "available_classes": class_engine.available_classes(),
+                "is_available": class_engine.is_available(),
+            }, handle, indent=2)
         return model_path, summary_path
 
     def save_occurrence_model(self, occurrence_engine) -> str:

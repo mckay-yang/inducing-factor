@@ -117,6 +117,10 @@ class EcoDisturbanceAttributionSystem:
         discretizer_sample_limit: int = 200000,
         model_sample_limit: int = 200000,
         progress_log_every: int = 1,
+        train_end_year: Optional[int] = None,
+        validation_years: Optional[list[int]] = None,
+        validation_required: bool = True,
+        validation_metric_thresholds: Optional[dict[str, float]] = None,
         config: Optional[AppConfig] = None,
     ):
         if config is not None:
@@ -159,12 +163,20 @@ class EcoDisturbanceAttributionSystem:
             self.min_count_per_class = getattr(config.attribution, "min_count_per_class", 10)
             self.class_prior_lift_threshold = getattr(config.attribution, "class_prior_lift_threshold", 2.0)
             self.top_n_per_class = getattr(config.attribution, "top_n_per_class", 20)
+            self.train_end_year = getattr(config.attribution, "train_end_year", None)
+            self.validation_years = getattr(config.attribution, "validation_years", None)
+            self.validation_required = getattr(config.attribution, "validation_required", True)
+            self.validation_metric_thresholds = getattr(config.attribution, "validation_metric_thresholds", {"auc_min": 0.60, "pr_auc_min": 0.05})
             self.config = config
         else:
             self.analyze_by_class = False
             self.min_count_per_class = 10
             self.class_prior_lift_threshold = 2.0
             self.top_n_per_class = 20
+            self.train_end_year = train_end_year
+            self.validation_years = validation_years
+            self.validation_metric_thresholds = validation_metric_thresholds or {"auc_min": 0.60, "pr_auc_min": 0.05}
+            self.validation_required = validation_required
             self.config = None
             self.run_num_workers = 0
             self.run_max_auto_workers = 4
@@ -276,6 +288,7 @@ class EcoDisturbanceAttributionSystem:
                 return idx, npz_path, pd.DataFrame(), None
             df_chunk = self._load_chunk_dataframe(npz_path, row_indices=selected_indices)
             df_chunk_samples = self._build_chunk_training_samples(df_chunk, skip_sampling=True)
+            df_chunk_samples = self._filter_chunk_by_train_years(df_chunk_samples)
             logger.info("[run][stage 1] chunk %d loaded: %d rows", idx, len(df_chunk_samples))
             return idx, npz_path, df_chunk_samples, None
         except Exception as exc:
@@ -347,6 +360,7 @@ class EcoDisturbanceAttributionSystem:
 
             df_chunk = self._load_chunk_dataframe_from_data(data, row_indices=selected_indices)
             df_chunk_samples = self._build_chunk_training_samples(df_chunk, skip_sampling=True)
+            df_chunk_samples = self._filter_chunk_by_train_years(df_chunk_samples)
             if df_chunk_samples.empty:
                 logger.debug("[run][stage 2] chunk %s produced empty samples", chunk_name)
                 return empty_result
@@ -443,6 +457,123 @@ class EcoDisturbanceAttributionSystem:
             if os.path.exists(path):
                 os.remove(path)
                 logger.info("[run] cleared stage %d cache (dependencies changed)", s)
+
+    def _filter_chunk_by_train_years(self, df_chunk_samples: pd.DataFrame) -> pd.DataFrame:
+        if self.train_end_year is None:
+            return df_chunk_samples
+        if "year" not in df_chunk_samples.columns:
+            return df_chunk_samples
+        n_before = len(df_chunk_samples)
+        df_filtered = df_chunk_samples[df_chunk_samples["year"] <= self.train_end_year].copy()
+        n_dropped = n_before - len(df_filtered)
+        if n_dropped > 0:
+            logger.debug("Filtered %d rows beyond train_end_year=%d (remaining: %d)",
+                         n_dropped, self.train_end_year, len(df_filtered))
+        return df_filtered
+
+    def _resolve_validation_years(self) -> list[int]:
+        if self.validation_years is not None:
+            return sorted(self.validation_years)
+        if self.train_end_year is None:
+            return []
+        val_years = []
+        for npz_path in self._iter_chunk_files():
+            try:
+                data = np.load(npz_path, allow_pickle=True)
+                if "year" in data.files:
+                    years = np.unique(data["year"][data["year"] > self.train_end_year])
+                    val_years.extend(int(y) for y in years)
+                data.close()
+            except Exception:
+                continue
+        return sorted(set(val_years))
+
+    def _run_temporal_validation(self) -> Optional[dict]:
+        if self.train_end_year is None and self.validation_years is None:
+            logger.info("[validation] no temporal split configured — skipping validation")
+            return None
+
+        val_years = self._resolve_validation_years()
+        if not val_years:
+            logger.warning("[validation] no validation years found after train_end_year=%s", self.train_end_year)
+            return None
+
+        logger.info("[validation] running temporal validation on years: %s", val_years)
+
+        all_val_predictions = []
+        all_val_labels = []
+        all_val_classes = []
+
+        for npz_path in self._iter_chunk_files():
+            try:
+                data = np.load(npz_path, allow_pickle=True)
+                if "year" not in data.files:
+                    data.close()
+                    continue
+                years = data["year"]
+                val_mask = np.isin(years, val_years)
+                if not val_mask.any():
+                    data.close()
+                    continue
+                selected_indices = np.where(val_mask)[0]
+                df_chunk = self._load_chunk_dataframe_from_data(data, row_indices=selected_indices)
+                df_chunk_samples = self._build_chunk_training_samples(df_chunk, skip_sampling=True)
+                df_val = df_chunk_samples[df_chunk_samples["year"].isin(val_years)].copy()
+                data.close()
+                if df_val.empty:
+                    continue
+
+                for col in self.feature_columns:
+                    if col not in df_val.columns:
+                        df_val[col] = np.nan
+                df_clean = df_val.dropna(subset=[c for c in self.feature_columns if c in self.static_features + self.direct_features])
+                if df_clean.empty:
+                    continue
+
+                preds = self.predict_dataframe(df_clean)
+                if "disturbance_probability" in preds.columns:
+                    all_val_predictions.append(preds["disturbance_probability"].values)
+                if self.target in df_clean.columns:
+                    all_val_labels.append(df_clean[self.target].values)
+                if "disturbance_class" in df_clean.columns:
+                    all_val_classes.append(df_clean["disturbance_class"].values)
+            except Exception as exc:
+                logger.warning("[validation] error processing chunk %s: %s", npz_path, exc)
+                continue
+
+        if not all_val_labels:
+            logger.warning("[validation] no validation data collected")
+            return None
+
+        y_true = np.concatenate(all_val_labels)
+        y_pred_prob = np.concatenate(all_val_predictions)
+        y_pred_class = np.concatenate(all_val_classes) if all_val_classes else None
+
+        from inducing_factor.core.validation import check_validation_gate, compute_validation_metrics
+
+        metrics = compute_validation_metrics(
+            y_true, y_pred_prob, y_pred_class,
+            class_labels=self.class_engine.class_labels if hasattr(self.class_engine, "class_labels") else None,
+        )
+
+        passed, reason = check_validation_gate(metrics, self.validation_metric_thresholds)
+        metrics["gate_passed"] = passed
+        metrics["gate_reason"] = reason
+        metrics["train_end_year"] = self.train_end_year
+        metrics["validation_years"] = val_years
+
+        report_path = os.path.join(self.out_dir, "validation_report.json")
+        import json
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(metrics, f, ensure_ascii=False, indent=2, default=str)
+        logger.info("[validation] report saved: %s (passed=%s)", report_path, passed)
+
+        if not passed and self.validation_required:
+            logger.warning("[validation] GATE FAILED: %s", reason)
+        else:
+            logger.info("[validation] %s", reason)
+
+        return metrics
 
     def _streaming_run(self) -> dict:
         chunk_files = list(self._iter_chunk_files())
@@ -643,6 +774,7 @@ class EcoDisturbanceAttributionSystem:
                 "network_feature_columns": self.network_feature_columns,
                 "selected_factor_ids": [factor.factor_id for factor in self.selected_factors],
                 "class_labels": self.class_engine.class_labels,
+                "class_model_status": self.class_engine.model_status,
                 "target": self.target,
                 "streaming_run": True,
                 "discretizer_sample_limit": self.discretizer_sample_limit,
@@ -667,11 +799,14 @@ class EcoDisturbanceAttributionSystem:
                 n_bg=n_bg,
             )
 
+        validation_report = self._run_temporal_validation()
+
         return {
             "training_samples": training_samples,
             "factors": df_factors,
             "factor_class_summary": self.class_summary,
             "attribution_preview": attribution,
+            "validation_report": validation_report,
         }
 
     def _iter_chunk_files(self) -> Iterable[str]:
@@ -976,6 +1111,26 @@ class EcoDisturbanceAttributionSystem:
         df.loc[bg_mask, "reference_month"] = sampled_months
         return df
 
+    def _build_prediction_features(
+        self,
+        df_chunk: pd.DataFrame,
+        predict_month: int,
+    ) -> tuple[pd.DataFrame, List[str]]:
+        """Build features for prediction mode without requiring CCDC columns.
+
+        Unlike _build_chunk_training_samples, this method does NOT require
+        disturbance_time_value, disturbance_type, disturbance_month, or
+        reference_month. Instead, it passes an explicit predict_month to the
+        feature builder for leakage-free rainfall window computation.
+
+        Returns (features_df, required_cols) matching the shape expected by
+        downstream callers.
+        """
+        df = df_chunk.sort_values(["point_id", "year"]).copy()
+        if self.target not in df.columns:
+            df[self.target] = 0
+        return self.feature_builder.build_chunk_features(df, predict_month=predict_month)
+
     def _build_chunk_training_samples(self, df_chunk: pd.DataFrame, skip_sampling: bool = False) -> pd.DataFrame:
         if "disturbance_time_value" not in df_chunk.columns and "disturbance_type" not in df_chunk.columns:
             raise KeyError("Input chunk is missing required disturbance time column")
@@ -1148,7 +1303,7 @@ class EcoDisturbanceAttributionSystem:
 
     def attribute_sample(self, sample_row: pd.Series) -> dict:
         result = self.attribution_engine.attribute_sample(sample_row, self.discretizer, self.feature_columns, self.selected_factors)
-        if self.class_engine.model is not None:
+        if self.class_engine.is_available():
             sample_df = pd.DataFrame([sample_row[self.feature_columns].to_dict()])
             label_df = self.discretizer.transform(sample_df, as_labels=True)
             class_probs = self.class_engine.predict_proba(label_df, self.selected_factors)
@@ -1165,7 +1320,66 @@ class EcoDisturbanceAttributionSystem:
         self.artifacts.save_attribution_preview(df_attr)
         return df_attr
 
-    def predict_dataframe(self, samples: pd.DataFrame) -> pd.DataFrame:
+    def predict_ensemble(
+        self, samples: pd.DataFrame, year: int, n_jobs: int = 1,
+    ) -> pd.DataFrame:
+        """12-month ensemble prediction.
+
+        For each month 1-12, builds rainfall window features aligned to that
+        month, runs the model, and collects per-point probabilities.  Then
+        aggregates into mean/max/peak_month columns.
+
+        Args:
+            samples: Multi-year DataFrame (lookback window + target year) with
+                point_id, year, and all required covariates.
+            year: Target prediction year (filters rows to ``samples[samples["year"] == year]``).
+            n_jobs: Not yet wired; reserved for future parallelization.
+
+        Returns:
+            DataFrame with point_id, x, y, raster_row, raster_col,
+            disturbance_probability_mean, disturbance_probability_max,
+            disturbance_probability_peak_month, and class probability columns
+            (mean across months).
+        """
+        month_probs: List[pd.DataFrame] = []
+        for month in range(1, 13):
+            df, _required_cols = self._build_prediction_features(samples, predict_month=month)
+            df_year = df[df["year"] == year].copy()
+            if df_year.empty:
+                continue
+            for col in self.feature_columns:
+                if col not in df_year.columns:
+                    df_year[col] = np.nan
+
+            drop_mask = df_year[self.feature_columns].isna().any(axis=1)
+            if drop_mask.all():
+                continue
+            pred = self.predict_dataframe(df_year[~drop_mask].copy(), predict_month=month)
+            if pred.empty:
+                continue
+            id_cols = [c for c in ["point_id", "x", "y", "raster_row", "raster_col"] if c in pred.columns]
+            keep = id_cols + ["disturbance_probability"]
+            prob = pred[keep].copy()
+            prob["month"] = month
+            month_probs.append(prob)
+
+        if not month_probs:
+            return pd.DataFrame()
+
+        all_probs = pd.concat(month_probs, ignore_index=True)
+        grouped = all_probs.groupby([c for c in id_cols if c in all_probs.columns])
+        result = grouped["disturbance_probability"].agg(["mean", "max"]).rename(
+            columns={"mean": "disturbance_probability_mean", "max": "disturbance_probability_max"},
+        ).reset_index()
+        peak_month = all_probs.loc[grouped["disturbance_probability"].idxmax().dropna().astype(int)]
+        result["disturbance_probability_peak_month"] = peak_month.set_index(id_cols)["month"].reindex(
+            pd.MultiIndex.from_frame(result[id_cols]) if len(id_cols) > 1 else result.index,
+        ).values
+        # For backward compatibility, set legacy column = mean
+        result["disturbance_probability"] = result["disturbance_probability_mean"]
+        return result
+
+    def predict_dataframe(self, samples: pd.DataFrame, predict_month: Optional[int] = None) -> pd.DataFrame:
         label_df = self.discretizer.transform(samples[self.feature_columns], as_labels=True)
         occurrence_probs = self.occurrence_engine.predict_proba(label_df, self.selected_factors)
         result = samples[[col for col in ["point_id", "raster_row", "raster_col", "x", "y", "year"] if col in samples.columns]].copy()
@@ -1173,6 +1387,9 @@ class EcoDisturbanceAttributionSystem:
             result["disturbance_probability"] = occurrence_probs[:, 1]
         else:
             result["disturbance_probability"] = 0.0
+        if not self.class_engine.is_available():
+            logger.debug("predict_dataframe: class model unavailable, skipping dominant_disturbance_class and class probabilities.")
+            return result
         class_probs = self.class_engine.predict_proba(label_df, self.selected_factors)
         if not class_probs.empty:
             result = pd.concat([result.reset_index(drop=True), class_probs.reset_index(drop=True)], axis=1)

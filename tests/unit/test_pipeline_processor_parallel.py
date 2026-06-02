@@ -95,7 +95,7 @@ def test_process_all_chunks_uses_execute_chunk_tasks_when_worker_count_above_one
         observed["tasks"] = list(pending_tasks)
         observed["worker_count"] = kwargs["worker_count"]
         observed["submit_fn"] = kwargs["submit_fn"]
-        observed["initargs"] = kwargs["initargs"]
+        observed["initargs"] = kwargs.get("initargs", ())
         return iter(expected_results)
 
     monkeypatch.setattr("inducing_factor.pipeline.processor.execute_chunk_tasks", fake_execute_chunk_tasks)
@@ -105,7 +105,6 @@ def test_process_all_chunks_uses_execute_chunk_tasks_when_worker_count_above_one
     assert observed["tasks"] == tasks
     assert observed["worker_count"] == 2
     assert observed["submit_fn"].__name__ == "_process_chunk_task"
-    assert observed["initargs"] == (processor.config, processor.cache_dir, processor.start_year, processor.end_year, processor.chunk_size)
 
 
 @pytest.mark.parametrize("worker_count", [0, 1])

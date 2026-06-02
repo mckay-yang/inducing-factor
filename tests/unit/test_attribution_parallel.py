@@ -74,7 +74,7 @@ def test_streaming_stage_two_merges_parallel_pattern_counts(monkeypatch, tmp_pat
 
     monkeypatch.setattr(system, "_load_chunk_samples", fake_load_chunk_samples)
 
-    def fake_map_pattern_counts(files):
+    def fake_map_pattern_counts(files, num_workers=1):
         return [
             {
                 "event_counts": Counter({("a",): 2}),
@@ -101,6 +101,8 @@ def test_streaming_stage_two_merges_parallel_pattern_counts(monkeypatch, tmp_pat
     monkeypatch.setattr(system, "_map_pattern_counts", fake_map_pattern_counts)
 
     class DummyDiscretizer:
+        features_ = ["f"]
+
         def fit(self, X, y):
             return self
 
@@ -130,7 +132,7 @@ def test_streaming_stage_two_merges_parallel_pattern_counts(monkeypatch, tmp_pat
         def reduce_redundant_patterns(self, pattern_candidates, pattern_stability):
             return {("a",): {"support_event": 1.0, "support_background": 1.0, "relative_risk": 1.0, "stability": 1.0}}
 
-        def build_factor_library(self, reduced_patterns):
+        def build_factor_library(self, reduced_patterns, n_event=0, n_background=0):
             from inducing_factor.core.models import InducingFactor
 
             return [
@@ -193,6 +195,7 @@ def test_streaming_stage_two_merges_parallel_pattern_counts(monkeypatch, tmp_pat
 
     class DummyClass:
         model = object()
+        model_status = "ok"
         class_labels = [1, 2, 3, 4]
 
         def fit(self, *args, **kwargs):

@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     predict_parser.add_argument("--config")
     predict_parser.add_argument("--year", type=int, required=True)
     predict_parser.add_argument("--output-dir")
+    predict_parser.add_argument("--skip-validation", action="store_true", default=False)
 
     analyze_classes_parser = subparsers.add_parser("analyze-classes")
     analyze_classes_parser.add_argument("--config", required=True)
@@ -143,6 +144,40 @@ def _setup_file_logging(log_dir: str, prefix: str) -> str:
     return log_path
 
 
+def _check_validation_before_predict(mapper, skip_validation: bool):
+    import json
+    import os
+    log = logging.getLogger(__name__)
+    out_dir = mapper.config.paths.out_dir
+    report_path = os.path.join(out_dir, "validation_report.json")
+    if not os.path.exists(report_path):
+        if mapper.system.validation_required and not skip_validation:
+            raise RuntimeError(
+                f"No validation report found at {report_path}. "
+                f"Run pipeline first, or use --skip-validation to bypass."
+            )
+        if not skip_validation:
+            log.info("No validation report found — prediction will proceed without gating")
+        return
+
+    with open(report_path, "r", encoding="utf-8") as f:
+        report = json.load(f)
+
+    gate_passed = report.get("gate_passed", False)
+    gate_reason = report.get("gate_reason", "unknown")
+
+    if not gate_passed and not skip_validation:
+        raise RuntimeError(
+            f"Validation gate failed: {gate_reason}. "
+            f"Use --skip-validation to bypass (with warning)."
+        )
+
+    if not gate_passed and skip_validation:
+        log.warning("Validation gate failed (%s) but --skip-validation set — proceeding anyway", gate_reason)
+    else:
+        log.info("Validation gate passed — proceeding with prediction")
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     parser = build_parser()
@@ -161,6 +196,7 @@ def main():
         processor.process_all_chunks()
     elif args.command == "predict-annual-map":
         mapper = AnnualProbabilityMapper(config=config)
+        _check_validation_before_predict(mapper, args.skip_validation)
         mapper.write_maps(args.year, output_dir=args.output_dir)
     elif args.command == "analyze-classes":
         _run_analyze_classes(args)
