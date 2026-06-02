@@ -96,6 +96,7 @@ class AttributionConfig:
         "auc_min": 0.60,
         "pr_auc_min": 0.05,
     })
+    predict_ensemble: bool = True
 
 
 @dataclass

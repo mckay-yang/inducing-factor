@@ -50,6 +50,14 @@ attribution:
   min_count_per_class: 10
   class_prior_lift_threshold: 2.0
   top_n_per_class: 20
+  # Temporal validation split (train on 2016-2023, validate on 2024 if available)
+  train_end_year: 2023
+  validation_required: true
+  validation_metric_thresholds:
+    auc_min: 0.60
+    pr_auc_min: 0.05
+  # Prediction ensemble (12-month mean/max/peak, no label leakage)
+  predict_ensemble: true
 
 data_sources:
   aoi_shp: "data/aoi/LangToBasighat_clean.shp"
