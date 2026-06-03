@@ -40,7 +40,7 @@ attribution:
 
 data_sources:
   aoi_shapefile: "data/aoi/LangToBasighat.shp"
-  dem_raster: "data/dem/tibet_dem.tif"
+  # dem_raster removed for synthetic test mode
   landuse_dir: "data/landuse"
   rainfall_dir: "data/rainfall"
   temperature_dir: "data/temperature"

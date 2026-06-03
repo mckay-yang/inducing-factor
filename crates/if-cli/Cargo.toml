@@ -27,5 +27,11 @@ if-pipeline = { path = "../if-pipeline" }
 if-core = { path = "../if-core" }
 if-io = { path = "../if-io" }
 
+gdal = { workspace = true, optional = true }
+
+[features]
+default = ["gdal"]
+gdal = ["if-pipeline/gdal", "dep:gdal"]
+
 [dev-dependencies]
 tempfile.workspace = true
