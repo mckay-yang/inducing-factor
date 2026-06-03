@@ -1,0 +1,64 @@
+# Example configuration for the inducing-factor Rust pipeline.
+#
+# Paths in this file are synthetic (relative).  Replace them with real
+# paths when running against actual data.
+#
+# Relative paths are resolved from the directory containing THIS file.
+
+paths:
+  cache_dir: "cache/chunks"
+  output_dir: "results/models"
+  # data_dir: "data"   # uncomment to resolve data_source paths from here
+
+chunks:
+  tile_size: 1024
+  # aoi_shapefile: "data/aoi/LangToBasighat.shp"
+
+pipeline:
+  workers: "auto"          # or a positive integer, e.g. 4
+  memory_limit_gb: 8.0     # soft budget; workers auto-scale
+  start_year: 2016
+  end_year: 2016
+
+attribution:
+  lookback_years: 1
+  background_sample_rate: 0.5
+  max_pattern_size: 3
+  min_support: 0.05
+  min_relative_risk: 1.1
+  bootstrap_iterations: 5
+  min_stability: 0.4
+  max_bootstrap_samples: 1000
+  max_network_factors: 6
+  discretizer_method: "supervised_tree"
+  discretize_bins: 3
+  random_state: 42
+  discretizer_sample_limit: 200000
+  model_sample_limit: 200000
+  dominant_threshold: 0.55
+  synergy_threshold: 0.75
+
+data_sources:
+  aoi_shapefile: "data/aoi/LangToBasighat.shp"
+  # dem_raster removed for synthetic test mode
+  landuse_dir: "data/landuse"
+  rainfall_dir: "data/rainfall"
+  temperature_dir: "data/temperature"
+  resident_dir: "data/resident"
+  river_dir: "data/river"
+  road_dir: "data/road"
+  ccdc_dir: "data/ccdc_res"
+  disturbance_class_raster: "data/disturbance_class/disturbance_class_res.tif"
+
+  landuse_file_pattern: "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
+  road_file_pattern: "osm_{year}_roads.shp"
+  railway_file_pattern: "osm_{year}_railways.shp"
+  waterway_file_pattern: "osm_{year}_waterways.shp"
+  rainfall_monthly_pattern: "pre{year}{month:02d}.tif"
+  temperature_file_pattern: "tmp_{year}.nc"
+  resident_file_pattern: "GURS_{year}.tif"
+  ccdc_file_pattern: "{year}.tif"
+
+  disturbance_class_start_year: 2016
+  dem_nodata: -9999.0
+  resident_nodata: 127.0

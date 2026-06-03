@@ -1,0 +1,56 @@
+{
+  "feature_columns": [
+    "slope",
+    "aspect",
+    "dist_to_river",
+    "rainfall_prev_1m",
+    "rainfall_prev_2m",
+    "rainfall_prev_3m",
+    "rainfall_prev_total_3m",
+    "temperature_prev_last",
+    "temperature_prev_mean",
+    "temperature_prev_max",
+    "resident_prev_last",
+    "resident_prev_mean",
+    "resident_prev_max",
+    "dist_to_road_prev_last",
+    "dist_to_road_prev_mean",
+    "dist_to_road_prev_max",
+    "dist_to_railway_prev_last",
+    "dist_to_railway_prev_mean",
+    "dist_to_railway_prev_max",
+    "dist_to_waterway_prev_last",
+    "dist_to_waterway_prev_mean",
+    "dist_to_waterway_prev_max",
+    "landuse_prev_last"
+  ],
+  "network_feature_columns": [
+    "dist_to_river",
+    "dist_to_road_prev_last",
+    "landuse_prev_last",
+    "rainfall_prev_1m",
+    "rainfall_prev_2m",
+    "rainfall_prev_3m",
+    "rainfall_prev_total_3m",
+    "resident_prev_last",
+    "temperature_prev_last"
+  ],
+  "selected_factor_ids": [
+    "IF_001",
+    "IF_002",
+    "IF_003",
+    "IF_004",
+    "IF_005",
+    "IF_006"
+  ],
+  "class_labels": {
+    "1": "fire",
+    "2": "logging",
+    "3": "geo_hazard",
+    "4": "road_construction"
+  },
+  "target": "disturbance_flag",
+  "streaming_run": true,
+  "discretizer_sample_limit": 200000,
+  "model_sample_limit": 200000
+}

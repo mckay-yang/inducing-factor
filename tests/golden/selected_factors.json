@@ -1,0 +1,77 @@
+{
+  "factors": [
+    {
+      "factor_id": "IF_001",
+      "name": "rainfall_prev_2m_high",
+      "semantics": "high rainfall_prev_2m",
+      "items": [
+        "rainfall_prev_2m=high"
+      ],
+      "relative_risk": 511905.7619047619,
+      "stability": 1.0,
+      "score": 6.729446674011219
+    },
+    {
+      "factor_id": "IF_002",
+      "name": "rainfall_prev_1m_high__resident_prev_last_low__temperature_prev_last_low",
+      "semantics": "high rainfall_prev_1m + low last resident + low last temperature",
+      "items": [
+        "rainfall_prev_1m=high",
+        "resident_prev_last=low",
+        "temperature_prev_last=low"
+      ],
+      "relative_risk": 422620.04761904763,
+      "stability": 1.0,
+      "score": 5.4747038473069445
+    },
+    {
+      "factor_id": "IF_003",
+      "name": "rainfall_prev_3m_high",
+      "semantics": "high rainfall_prev_3m",
+      "items": [
+        "rainfall_prev_3m=high"
+      ],
+      "relative_risk": 357143.85714285716,
+      "stability": 1.0,
+      "score": 4.5663906931354274
+    },
+    {
+      "factor_id": "IF_004",
+      "name": "landuse_prev_last_2.0__rainfall_prev_total_3m_high__temperature_prev_last_low",
+      "semantics": "2.0 last landuse + high rainfall_prev_total_3m + low last temperature",
+      "items": [
+        "landuse_prev_last=2.0",
+        "rainfall_prev_total_3m=high",
+        "temperature_prev_last=low"
+      ],
+      "relative_risk": 333334.3333333333,
+      "stability": 1.0,
+      "score": 4.238967089763888
+    },
+    {
+      "factor_id": "IF_005",
+      "name": "dist_to_road_prev_last_near__rainfall_prev_1m_high",
+      "semantics": "near last dist_to_road + high rainfall_prev_1m",
+      "items": [
+        "dist_to_road_prev_last=near",
+        "rainfall_prev_1m=high"
+      ],
+      "relative_risk": 333334.3333333333,
+      "stability": 1.0,
+      "score": 4.238967089763888
+    },
+    {
+      "factor_id": "IF_006",
+      "name": "dist_to_river_near__rainfall_prev_2m_high",
+      "semantics": "near dist_to_river + high rainfall_prev_2m",
+      "items": [
+        "dist_to_river=near",
+        "rainfall_prev_2m=high"
+      ],
+      "relative_risk": 327381.95238095237,
+      "stability": 1.0,
+      "score": 4.157372351240388
+    }
+  ],
+  "count": 6
+}

@@ -1,0 +1,11 @@
+[env]
+GDAL_HOME = "/opt/homebrew/Caskroom/miniforge/base/envs/geo-science"
+GDAL_VERSION = "3.10.3"
+HDF5_DIR = "/opt/homebrew/Caskroom/miniforge/base/envs/geo-science"
+NETCDF_DIR = "/opt/homebrew/Caskroom/miniforge/base/envs/geo-science"
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/opt/homebrew/Caskroom/miniforge/base/envs/geo-science/lib"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/opt/homebrew/Caskroom/miniforge/base/envs/geo-science/lib"]
