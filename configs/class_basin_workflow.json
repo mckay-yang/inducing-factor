@@ -22,8 +22,8 @@
       "temperature": true,
       "landuse": true,
       "resident": true,
-      "river": false,
-      "road": false
+      "river": true,
+      "road": true
     },
     "smoke_test": {
       "dem": true,
@@ -32,8 +32,8 @@
       "temperature": true,
       "landuse": true,
       "resident": true,
-      "river": false,
-      "road": false
+      "river": true,
+      "road": true
     }
   },
   "data_process": {
