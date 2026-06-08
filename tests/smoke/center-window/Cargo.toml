@@ -1,0 +1,17 @@
+[package]
+name = "center-window-smoke"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+data-process = { path = "../../../crates/data-process" }
+gdal_crate = { package = "gdal", version = "0.19" }
+polars = { workspace = true }
+predict = { path = "../../../crates/predict" }
+serde_json = "1"
+train = { path = "../../../crates/train" }
+workflow-config = { path = "../../../crates/workflow-config" }
+
+[[test]]
+name = "center_window"
+path = "tests/center_window.rs"

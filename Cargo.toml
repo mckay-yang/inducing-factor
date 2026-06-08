@@ -1,12 +1,17 @@
 [workspace]
 members = [
-    "crates/if-core",
-    "crates/if-loaders",
-    "crates/if-pipeline",
-    "crates/if-config",
-    "crates/if-io",
-    "crates/if-cli",
-    "crates/if-tests",
+    "crates/factor-core",
+    "crates/gdal",
+    "crates/model",
+    "crates/data-process",
+    "crates/train",
+    "crates/predict",
+    "crates/loaders",
+    "crates/workflow-config",
+    "crates/artifacts",
+    "crates/cli",
+    "crates/golden-tests",
+    "tests/smoke/center-window",
 ]
 resolver = "2"
 
@@ -24,13 +29,12 @@ rand = "0.8"
 # ── Serialization ──
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
 
 # ── Error handling ──
 thiserror = "2.0"
 
 # ── Geo / GIS ──
-gdal = "0.15"
+gdal = "0.19"
 netcdf = "0.9"
 geo = "0.28"
 rstar = "0.12"
@@ -39,9 +43,6 @@ rstar = "0.12"
 polars = { version = "0.45", features = ["lazy", "ndarray", "parquet"] }
 rayon = "1.10"
 crossbeam = "0.8"
-
-# ── Config ──
-config = { version = "0.14", features = ["yaml"] }
 
 # ── CLI ──
 clap = { version = "4.5", features = ["derive"] }

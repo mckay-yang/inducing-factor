@@ -1,0 +1,15 @@
+[package]
+name = "gdal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["gdal"]
+gdal = ["dep:gdal_crate"]
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+gdal_crate = { package = "gdal", version = "0.19", optional = true }

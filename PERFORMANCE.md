@@ -6,7 +6,7 @@
 |---|---|---|---|
 | Python (reference) | 1000 points, 5 years, 512px tiles | ~12-18s | Includes NumPy/pandas overhead, GIL-bound on I/O |
 | Rust (native) | 1000 points, 5 years, 512px tiles | ~0.8-1.2s | Tests finish in < 1s wall clock |
-| Rust (if-tests) | Full synthetic pipeline + model training | ~0.13s | 8 integration tests complete in 130ms |
+| Rust (golden-tests) | Full synthetic pipeline + model training | ~0.13s | 8 integration tests complete in 130ms |
 
 **Speedup: ~10-15×** on synthetic pipeline workloads. The speedup is larger on CPU-bound feature engineering (Rust's zero-cost abstractions, SIMD through ndarray) and smaller on I/O-bound tasks (GDAL calls).
 
@@ -83,9 +83,9 @@ Worker auto-selection:
 
 ```bash
 cargo build --release
-time cargo run -p if-cli --release -- all --config configs/synthetic.yaml
+time cargo run -p cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
 
-samply record cargo run -p if-cli --release -- all --config configs/synthetic.yaml
+samply record cargo run -p cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
 
-heaptrack cargo run -p if-cli --release -- all --config configs/synthetic.yaml
+heaptrack cargo run -p cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
 ```

@@ -1,222 +1,119 @@
-# Inducing Factor Attribution — Rust Implementation
+# Inducing Factor Attribution - Rust Workspace
 
-A Rust-native implementation of the ecosystem disturbance attribution system. This is a complete rewrite of the Python `inducing_factor` package, providing equivalent functionality through a CLI and library crates.
+Rust-native ecosystem disturbance attribution system for CLASS/CCDC-grid
+preprocessing, inducing-factor training, and geospatial prediction products.
+
+The current architecture is a Cargo workspace. The production flow is:
+
+```text
+data-process -> train -> predict
+```
+
+The stages are integrated by `cli`, but the stage crates are kept independent.
 
 ## Quick Start
 
 ```bash
 # Build all crates
-cargo build --release
+cargo build --workspace
 
-# Show available commands
-cargo run -p if-cli -- --help
-
-# Run the full pipeline end-to-end with synthetic data
-cargo run -p if-cli -- all --config configs/example.yaml
+# Inspect the CLASS-based workflow plan
+cargo run -p cli -- plan-workflow --config configs/class_basin_workflow.json
 
 # Run individual stages
-cargo run -p if-cli -- pipeline --config configs/example.yaml
-cargo run -p if-cli -- train --config configs/example.yaml
-cargo run -p if-cli -- predict --config configs/example.yaml --year 2016
+cargo run -p cli -- data-process --config configs/class_basin_workflow.json
+cargo run -p cli -- train-workflow --config configs/class_basin_workflow.json
+cargo run -p cli -- predict-workflow --config configs/class_basin_workflow.json
 
-# Validate config without processing
-cargo run -p if-cli -- pipeline --config configs/example.yaml --dry-run
-
-# Override worker count
-cargo run -p if-cli -- pipeline --config configs/example.yaml --workers 4
+# Run the full workflow
+cargo run -p cli -- run-workflow --config configs/class_basin_workflow.json
 ```
 
 ## Command Reference
 
-### `pipeline` — Feature Extraction
+| Command | Purpose |
+|---|---|
+| `plan-workflow` | Opens the CLASS raster, expands years, and prints the tile/train/predict plan. |
+| `data-process` | Resamples source rasters/vectors to the CLASS grid and writes training/prediction feature parquet files. |
+| `train-workflow` | Trains the basin model from cached training features and writes `basin_model.json`. |
+| `predict-workflow` | Reads the model and prediction feature tiles and writes configured raster products. |
+| `run-workflow` | Runs data-process, train, and predict in sequence. |
 
-Runs the chunked feature extraction pipeline. Reads geospatial data sources, clips to AOI, and writes chunked parquet files to the cache directory.
-
-```bash
-if-cli pipeline --config <path> [--workers <n>] [--dry-run]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--config <path>` | Path to YAML configuration file (required) |
-| `--workers <n>` | Override worker count from config |
-| `--dry-run` | Validate config and show chunk plan without processing |
-
-### `train` — Model Training
-
-Trains the attribution model on pipeline cache output. Fits the AdaptiveDiscretizer, mines inducing factor candidates, selects top factors, and trains occurrence and class probability models. Saves all artifacts to the output directory.
-
-```bash
-if-cli train --config <path> [--output-dir <path>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--config <path>` | Path to YAML configuration file (required) |
-| `--output-dir <path>` | Override output directory for model artifacts |
-
-### `predict` — Probability Maps
-
-Generates annual disturbance probability maps. Reads chunked feature tables, runs model inference with learned factors, and writes probability rasters.
-
-```bash
-if-cli predict --config <path> [--year <year>] [--workers <n>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--config <path>` | Path to YAML configuration file (required) |
-| `--year <year>` | Target year for prediction (default: latest from config) |
-| `--workers <n>` | Override worker count from config |
-
-### `all` — End-to-End
-
-Runs pipeline → train → predict in sequence.
-
-```bash
-if-cli all --config <path> [--dry-run]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--config <path>` | Path to YAML configuration file (required) |
-| `--dry-run` | Validate config only, no processing |
+`run-workflow` accepts `--skip-data-process` when cached features are already present.
 
 ## Configuration
 
-See `configs/example.yaml` for a complete configuration reference with all available options:
+The active workflow config is JSON. See
+`configs/class_basin_workflow.json`.
 
-- **paths**: `cache_dir`, `output_dir`, `data_dir`
-- **chunks**: `tile_size`, `aoi_shapefile`
-- **pipeline**: `workers` (auto or integer), `memory_limit_gb`, `start_year`, `end_year`
-- **attribution**: `lookback_years`, `background_sample_rate`, `max_pattern_size`, `min_support`, `min_relative_risk`, `bootstrap_iterations`, `min_stability`, `max_bootstrap_samples`, `max_network_factors`, `discretizer_method`, `discretize_bins`, `random_state`, `dominant_threshold`, `synergy_threshold`
-- **data_sources**: paths and file patterns for DEM, landuse, rainfall, temperature, resident, river, road, CCDC, and disturbance class data
+Important fields:
 
-## Logging
-
-All commands use structured logging via `tracing` with the format:
-
-```
-[stage][phase n/total] description progress/total (percent%) elapsed=Xms eta=Ys
-```
-
-Set the `RUST_LOG` environment variable to control verbosity:
-
-```bash
-RUST_LOG=if_cli=debug cargo run -p if-cli -- pipeline --config configs/example.yaml
-```
-
-Progress bars are displayed during chunk processing via `indicatif`.
-
-## Performance Notes
-
-- **Worker count**: Defaults to all logical CPUs (`workers: "auto"` or `workers: 0`). Override with `--workers N` or config. Memory scales linearly with workers.
-- **Chunk size**: Default 1024×1024 pixels. Larger chunks use more memory; smaller chunks increase overhead.
-- **Synthetic mode**: When no real data is available, the pipeline generates synthetic data for testing. This is the default behavior when cache directories are empty.
-- **Memory**: Full-extent processing (29k×38k pixels) uses 1024×1024 chunking to manage memory. Each chunk requires ~0.3 GB for 1024×1024, ~2.5 GB for 4096×4096 per worker.
-- **Memory guardrail**: When `memory_limit_gb` is set, or system RAM is detected, workers are automatically reduced if the requested count would exceed available memory. Set `estimated_worker_memory_gb` to override auto-estimation.
-
-See [PERFORMANCE.md](PERFORMANCE.md) for detailed benchmarks, scaling charts, and known bottlenecks.
-
-## Production Runs
-
-### Real Data Testing
-
-Real-data loader tests are gated behind the `real-data` cargo feature and the `RUN_REAL_DATA_TESTS` environment variable:
-
-```bash
-RUN_REAL_DATA_TESTS=1 cargo test -p if-loaders --features real-data,gdal
-```
-
-Tests gracefully skip when data files are not found, allowing them to run in partial-data environments.
-
-### Memory Tuning
-
-| Config parameter | Purpose | Recommended |
-|---|---|---|
-| `pipeline.memory_limit_gb` | Hard cap on total pipeline RAM | 80% of system RAM |
-| `pipeline.memory_fraction` | Fraction of system RAM to use (default 0.7) | 0.6–0.8 |
-| `pipeline.estimated_worker_memory_gb` | Override per-worker estimate | Only if auto-estimate is wrong |
-| `chunks.tile_size` | Chunk dimensions in pixels | 1024 for most systems, 2048 for >64 GB |
-
-**Example production config excerpt:**
-
-```yaml
-pipeline:
-  workers: "auto"          # or 0 — auto-select based on CPU + memory
-  memory_limit_gb: 28      # hard limit for 32 GB system
-  memory_fraction: 0.7     # use ≤ 70% of available RAM
-  start_year: 2014
-  end_year: 2024
-
-chunks:
-  tile_size: 1024          # 1024×1024 per chunk
-```
-
-### Running Without Real Data
-
-Default tests never require real data. The full build:
-
-```bash
-cargo test --workspace     # 164 tests, 0 failures, no data/ required
-cargo build --release      # release binary
-```
-
-### Historical Issue: Python OOM at 16 Workers
-
-The Python pipeline OOM'd at 16 workers on a 24 GB system because each worker held a full pandas DataFrame copy. The Rust rewrite addresses this by:
-
-1. **Memory guardrail** — auto-reduces worker count when memory budget is exceeded
-2. **Zero-copy reads** — Polars/pyarrow columnar format avoids per-worker DataFrame duplication
-3. **Conservative estimation** — `estimate_worker_memory_gb` uses a 2.5× working-copy factor
-4. **Graceful degradation** — workers are capped, not killed; a warning is logged
+| Field | Meaning |
+|---|---|
+| `class_grid.raster` | CLASS/CCDC-class raster used as the canonical grid. |
+| `class_grid.start_year` | First band year for the CLASS raster. |
+| `train.training_years` | Explicit list of years used for training, for example `[2017, ..., 2024]`. |
+| `predict.prediction_year` | Future or held-out year to predict. |
+| `data_process.temporal_context_years` | Expands data processing years around train/predict years for temporal covariates. |
+| `*.workers` | Per-stage worker count. `0` means auto-detect available parallelism. |
+| `predict.products` | Output products such as `probability`, `dominant_factor`, and `missing_data_mask`. |
 
 ## Crate Structure
 
-| Crate | Description |
-|-------|-------------|
-| `if-cli` | CLI binary with `pipeline`, `train`, `predict`, `all` commands |
-| `if-config` | Typed configuration model with YAML deserialization |
-| `if-core` | Core algorithms: discretization, factor mining, logistic regression, Bayesian networks |
-| `if-pipeline` | Chunked processing pipeline, feature builder, probability mapper |
-| `if-loaders` | Data loaders for DEM, vector, climate, land use, CCDC (requires GDAL/netcdf features) |
-| `if-io` | Artifact serialization and golden test fixtures |
-| `if-tests` | Shared golden baseline test utilities |
+| Crate | Role |
+|---|---|
+| `gdal` | Independent geospatial grid primitives and GDAL boundary helpers. |
+| `model` | Model artifact schema and JSON read/write boundary shared by train and predict. |
+| `data-process` | CLASS-grid preprocessing, resampling, distance rasters, training points, and feature parquet generation. |
+| `train` | Inducing-factor mining and basin model training. |
+| `predict` | Model inference and geospatial raster product writers. |
+| `cli` | Workflow orchestration and JSON config mapping. |
+| `factor-core` | Statistical and inducing-factor algorithms used by `model` and `train/predict`. |
+| `loaders` | Low-level data loaders used by preprocessing. |
+| `workflow-config` | JSON workflow config types. |
+| `artifacts`, `golden-tests` | Test/artifact support. |
 
-## Relation to Python Project
+Dependency direction is intentional:
 
-This is a Rust-native rewrite of the Python `inducing_factor` package. The Rust implementation provides:
+```text
+gdal        model
+  ^          ^
+  |          |
+data-process train predict
+       \      |     /
+              cli
+```
 
-- Equivalent statistical results (golden baseline tests verify this)
-- Better memory management via chunked processing
-- Structured logging with progress bars
-- Type-safe configuration via serde
-- No Python runtime dependency
+`data-process`, `train`, and `predict` do not depend on each other.
 
-The Python codebase remains in the main branch and is not modified by this worktree.
+## Geospatial Rules
 
-## Corrected Prediction Semantics (2026-06)
+- CLASS is the canonical raster grid for preprocessing and prediction output.
+- Resampling uses CLASS-derived geospatial bounds, CRS, dimensions, and transform.
+- Vector distance rasters are computed from geometry in grid coordinates, not representative points.
+- Prediction products inherit the CLASS geotransform and CRS.
+- Full extent is processed in tiles, typically `1024x1024`, to control memory.
 
-The original Python code contained a **reference_month leakage bug**: rainfall window
-features were computed from `disturbance_month` (a CCDC-derived label column) even at
-prediction time. This made the model appear more accurate than it actually was on
-held-out data.
+## Missing Data
 
-**Rust corrections applied** (matching the now-corrected Python reference):
+The workflow is designed to keep prediction possible when covariates are missing.
+Feature extraction writes missing numeric inputs as `NaN`; training can use the
+`native_missing_category` policy so discretization learns an explicit missing
+bucket. Prediction also emits `missing_data_mask` when requested.
 
-| Component | Correction |
-|-----------|-----------|
-| `feature_builder.rs` | `predict_month: Option<u32>` parameter; when `Some`, uses explicit month instead of requiring `reference_month` from CCDC labels |
-| `ensemble.rs` (new) | `predict_ensemble()` iterates months 1-12, aggregates mean/max/peak_month — leakage-free future-year prediction |
-| `probability_mapper.rs` | `predict_chunk_ensemble()` wraps ensemble for raster-map generation |
+## Verification
 
-**Prediction flow:**
-1. **Training mode** (`predict_month=None`): uses per-row `reference_month` from CCDC
-   `disturbance_month` column (valid for historical labeled data)
-2. **Prediction mode** (`predict_month=Some(m)`): uses explicit uniform month, does NOT
-   require CCDC columns — pure covariate-based prediction
-3. **Ensemble mode**: runs prediction for all 12 months, aggregates into ensemble
-   statistics (`disturbance_probability_mean`, `_max`, `_peak_month`)
+Safe checks that do not require the full production dataset:
 
-**Golden baselines** must be regenerated from the corrected Python pipeline
-(`scripts/generate_golden_fixtures.py`) after re-running with the updated code.
+```bash
+cargo fmt --all -- --check
+cargo check --workspace
+cargo test -p data-process --lib
+cargo test -p train --lib
+cargo test -p predict --lib
+cargo test -p cli --bins
+cargo run -p cli -- plan-workflow --config configs/class_basin_workflow.json
+```
+
+Some GDAL-backed tests skip themselves when command-line GDAL tools are not
+available.

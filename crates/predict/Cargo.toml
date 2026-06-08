@@ -1,0 +1,21 @@
+[package]
+name = "predict"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["gdal"]
+gdal = []
+
+[dependencies]
+polars.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+gdal_crate = { package = "gdal", version = "0.19" }
+factor-core = { path = "../factor-core" }
+gdal = { path = "../gdal" }
+model = { path = "../model" }
