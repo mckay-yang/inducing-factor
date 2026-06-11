@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView1};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::types::InducingFactor;
@@ -201,6 +202,30 @@ pub fn fit_logistic_binary_internal(
     max_iter: usize,
     l2_penalty: f64,
 ) -> (Vec<f64>, f64) {
+    fit_logistic_binary_internal_impl(X, y, class_weight, max_iter, l2_penalty, None)
+}
+
+#[allow(non_snake_case)]
+fn fit_logistic_binary_internal_with_progress(
+    #[allow(non_snake_case)] X: &Array2<f64>,
+    y: &[f64],
+    class_weight: Option<&[f64]>,
+    max_iter: usize,
+    l2_penalty: f64,
+    progress: &(dyn Fn(&str) + Sync),
+) -> (Vec<f64>, f64) {
+    fit_logistic_binary_internal_impl(X, y, class_weight, max_iter, l2_penalty, Some(progress))
+}
+
+#[allow(non_snake_case)]
+fn fit_logistic_binary_internal_impl(
+    #[allow(non_snake_case)] X: &Array2<f64>,
+    y: &[f64],
+    class_weight: Option<&[f64]>,
+    max_iter: usize,
+    l2_penalty: f64,
+    progress: Option<&(dyn Fn(&str) + Sync)>,
+) -> (Vec<f64>, f64) {
     let (n_samples, n_features) = X.dim();
     if n_samples == 0 {
         return (vec![0.0; n_features], 0.0);
@@ -240,10 +265,21 @@ pub fn fit_logistic_binary_internal(
         reg[[i, i]] = l2_penalty;
     }
 
-    for _iter in 0..max_iter {
+    for iter in 0..max_iter {
+        progress_log(
+            progress,
+            format!(
+                "[numeric-logistic] iteration {}/{} start, rows={}, dimensions={}",
+                iter + 1,
+                max_iter,
+                n_samples,
+                n_features
+            ),
+        );
         // Compute p_i = sigmoid(X_i · beta)
         let mut p = vec![0.0; n_samples];
         let mut has_non_finite = false;
+        let mut pred_bucket = usize::MAX;
         for (i, pi) in p.iter_mut().enumerate() {
             let lin: f64 = X_aug
                 .row(i)
@@ -257,6 +293,16 @@ pub fn fit_logistic_binary_internal(
             if !(*pi).is_finite() {
                 has_non_finite = true;
             }
+            progress_rows(
+                progress,
+                "numeric-logistic",
+                iter + 1,
+                max_iter,
+                "prediction pass",
+                i + 1,
+                n_samples,
+                &mut pred_bucket,
+            );
         }
 
         if has_non_finite {
@@ -265,6 +311,7 @@ pub fn fit_logistic_binary_internal(
 
         // Weighted Hessian: H = X^T W X + reg, where W_ii = w_i * p_i * (1-p_i)
         let mut H = reg.clone();
+        let mut hessian_bucket = usize::MAX;
         for i in 0..n_samples {
             let wi = if has_weights { w[i] } else { default_weight };
             let diag = wi * p[i] * (1.0 - p[i]).max(1e-10);
@@ -273,16 +320,37 @@ pub fn fit_logistic_binary_internal(
                     H[[j, k]] += diag * X_aug[[i, j]] * X_aug[[i, k]];
                 }
             }
+            progress_rows(
+                progress,
+                "numeric-logistic",
+                iter + 1,
+                max_iter,
+                "hessian pass",
+                i + 1,
+                n_samples,
+                &mut hessian_bucket,
+            );
         }
 
         // Gradient: g = X^T W (y - p) - reg · beta
         let mut grad = vec![0.0; n_params];
+        let mut gradient_bucket = usize::MAX;
         for i in 0..n_samples {
             let wi = if has_weights { w[i] } else { default_weight };
             let residual = wi * (y[i] - p[i]);
             for j in 0..n_params {
                 grad[j] += residual * X_aug[[i, j]];
             }
+            progress_rows(
+                progress,
+                "numeric-logistic",
+                iter + 1,
+                max_iter,
+                "gradient pass",
+                i + 1,
+                n_samples,
+                &mut gradient_bucket,
+            );
         }
         // Subtract regularization gradient (not for intercept)
         for j in 0..n_features {
@@ -299,13 +367,195 @@ pub fn fit_logistic_binary_internal(
             max_delta = max_delta.max(delta[j].abs());
         }
 
+        progress_log(
+            progress,
+            format!(
+                "[numeric-logistic] iteration {}/{} complete, rows={}, max_delta={:.6e}",
+                iter + 1,
+                max_iter,
+                n_samples,
+                max_delta
+            ),
+        );
+
         if max_delta < 1e-8 {
+            progress_log(
+                progress,
+                format!(
+                    "[numeric-logistic] converged at iteration {}/{} with max_delta={:.6e}",
+                    iter + 1,
+                    max_iter,
+                    max_delta
+                ),
+            );
             break;
         }
     }
 
     let intercept = beta[n_features];
     let weights = beta[..n_features].to_vec();
+    (weights, intercept)
+}
+
+struct NumericBatchFit<'a> {
+    feature_data: &'a [Vec<f64>],
+    target: &'a [f64],
+    means: &'a [f64],
+    scales: &'a [f64],
+    class_weight: &'a [f64],
+    max_epochs: usize,
+    learning_rate: f64,
+    l2_penalty: f64,
+    progress: Option<&'a (dyn Fn(&str) + Sync)>,
+}
+
+fn fit_numeric_logistic_parallel(cfg: NumericBatchFit<'_>) -> (Vec<f64>, f64) {
+    let n_rows = cfg.feature_data.len();
+    let n_cols = cfg.means.len().min(cfg.scales.len());
+    if n_rows == 0 || n_cols == 0 {
+        return (vec![0.0; n_cols], 0.0);
+    }
+
+    let pos = cfg.target.iter().filter(|&&v| v > 0.5).count() as f64;
+    let base_rate = (pos / n_rows as f64).clamp(1e-6, 1.0 - 1e-6);
+    let mut weights = vec![0.0; n_cols];
+    let mut intercept = (base_rate / (1.0 - base_rate)).ln();
+    let mut prev_loss = f64::INFINITY;
+
+    for epoch in 0..cfg.max_epochs {
+        progress_log(
+            cfg.progress,
+            format!(
+                "[numeric-logistic] epoch {}/{} start, rows={}, dimensions={}",
+                epoch + 1,
+                cfg.max_epochs,
+                n_rows,
+                n_cols
+            ),
+        );
+
+        let mut grad = vec![0.0; n_cols + 1];
+        let mut weighted_loss = 0.0;
+        let mut pass_bucket = usize::MAX;
+
+        for segment in 0..4 {
+            let start = n_rows * segment / 4;
+            let end = n_rows * (segment + 1) / 4;
+            if start >= end {
+                continue;
+            }
+            let (segment_grad, segment_loss) = (start..end)
+                .into_par_iter()
+                .fold(
+                    || (vec![0.0; n_cols + 1], 0.0f64),
+                    |(mut local_grad, mut local_loss), row_idx| {
+                        let row = &cfg.feature_data[row_idx];
+                        let y = cfg.target[row_idx];
+                        let sample_weight = if y > 0.5 {
+                            cfg.class_weight.get(1).copied().unwrap_or(1.0)
+                        } else {
+                            cfg.class_weight.first().copied().unwrap_or(1.0)
+                        };
+                        let mut lin = intercept;
+                        for col_idx in 0..n_cols {
+                            let x = standardize_value(
+                                row.get(col_idx).copied().unwrap_or(f64::NAN),
+                                cfg.means[col_idx],
+                                cfg.scales[col_idx],
+                            );
+                            lin += weights[col_idx] * x;
+                        }
+                        let p = sigmoid(lin.clamp(-30.0, 30.0));
+                        let residual = sample_weight * (p - y);
+                        for col_idx in 0..n_cols {
+                            let x = standardize_value(
+                                row.get(col_idx).copied().unwrap_or(f64::NAN),
+                                cfg.means[col_idx],
+                                cfg.scales[col_idx],
+                            );
+                            local_grad[col_idx] += residual * x;
+                        }
+                        local_grad[n_cols] += residual;
+
+                        let p_clamped = p.clamp(1e-12, 1.0 - 1e-12);
+                        local_loss += sample_weight
+                            * (-(y * p_clamped.ln() + (1.0 - y) * (1.0 - p_clamped).ln()));
+                        (local_grad, local_loss)
+                    },
+                )
+                .reduce(
+                    || (vec![0.0; n_cols + 1], 0.0f64),
+                    |(mut grad_a, loss_a), (grad_b, loss_b)| {
+                        for (a, b) in grad_a.iter_mut().zip(grad_b.iter()) {
+                            *a += *b;
+                        }
+                        (grad_a, loss_a + loss_b)
+                    },
+                );
+
+            for (dst, src) in grad.iter_mut().zip(segment_grad.iter()) {
+                *dst += *src;
+            }
+            weighted_loss += segment_loss;
+            progress_rows(
+                cfg.progress,
+                "numeric-logistic",
+                epoch + 1,
+                cfg.max_epochs,
+                "gradient pass",
+                end,
+                n_rows,
+                &mut pass_bucket,
+            );
+        }
+
+        let n_inv = 1.0 / n_rows as f64;
+        for col_idx in 0..n_cols {
+            grad[col_idx] = grad[col_idx] * n_inv + cfg.l2_penalty * weights[col_idx] * n_inv;
+        }
+        grad[n_cols] *= n_inv;
+
+        let step = cfg.learning_rate / (1.0 + 0.05 * epoch as f64);
+        let mut max_delta: f64 = 0.0;
+        for col_idx in 0..n_cols {
+            let delta = -step * grad[col_idx];
+            weights[col_idx] += delta;
+            max_delta = max_delta.max(delta.abs());
+        }
+        let intercept_delta = -step * grad[n_cols];
+        intercept += intercept_delta;
+        max_delta = max_delta.max(intercept_delta.abs());
+
+        let l2_loss = 0.5 * cfg.l2_penalty * weights.iter().map(|w| w * w).sum::<f64>();
+        let mean_loss = (weighted_loss + l2_loss) * n_inv;
+        progress_log(
+            cfg.progress,
+            format!(
+                "[numeric-logistic] epoch {}/{} complete, rows={}, mean_loss={:.6}, max_delta={:.6e}",
+                epoch + 1,
+                cfg.max_epochs,
+                n_rows,
+                mean_loss,
+                max_delta
+            ),
+        );
+
+        if (prev_loss - mean_loss).abs() < 1e-7 || max_delta < 1e-7 {
+            progress_log(
+                cfg.progress,
+                format!(
+                    "[numeric-logistic] converged at epoch {}/{} with mean_loss={:.6}, max_delta={:.6e}",
+                    epoch + 1,
+                    cfg.max_epochs,
+                    mean_loss,
+                    max_delta
+                ),
+            );
+            break;
+        }
+        prev_loss = mean_loss;
+    }
+
     (weights, intercept)
 }
 
@@ -412,6 +662,15 @@ pub struct OccurrenceProbabilityEngine {
     pub backend: String,
     /// Base rate for fallback (when only one class present)
     pub base_rate: f64,
+    /// Numeric feature columns used by vector-space logistic regression.
+    #[serde(default)]
+    pub numeric_feature_columns: Vec<String>,
+    /// Per-feature training mean used for missing-value imputation.
+    #[serde(default)]
+    pub numeric_means: Vec<f64>,
+    /// Per-feature training scale used for z-score normalization.
+    #[serde(default)]
+    pub numeric_scales: Vec<f64>,
 }
 
 impl OccurrenceProbabilityEngine {
@@ -423,7 +682,126 @@ impl OccurrenceProbabilityEngine {
             factor_ids: Vec::new(),
             backend: "logistic_regression".to_string(),
             base_rate: 0.0,
+            numeric_feature_columns: Vec::new(),
+            numeric_means: Vec::new(),
+            numeric_scales: Vec::new(),
         }
+    }
+
+    /// Fit a logistic regression directly on numeric feature vectors.
+    ///
+    /// Missing and non-finite values are imputed with the training mean, then
+    /// each feature is z-score normalized. Prediction must use the stored
+    /// means/scales to stay in the same high-dimensional feature space.
+    pub fn fit_numeric(
+        &mut self,
+        feature_columns: &[String],
+        feature_data: &[Vec<f64>],
+        target: &[f64],
+        random_state: u64,
+    ) {
+        self.fit_numeric_impl(feature_columns, feature_data, target, random_state, None);
+    }
+
+    pub fn fit_numeric_with_progress(
+        &mut self,
+        feature_columns: &[String],
+        feature_data: &[Vec<f64>],
+        target: &[f64],
+        random_state: u64,
+        progress: &(dyn Fn(&str) + Sync),
+    ) {
+        self.fit_numeric_impl(
+            feature_columns,
+            feature_data,
+            target,
+            random_state,
+            Some(progress),
+        );
+    }
+
+    fn fit_numeric_impl(
+        &mut self,
+        feature_columns: &[String],
+        feature_data: &[Vec<f64>],
+        target: &[f64],
+        random_state: u64,
+        progress: Option<&(dyn Fn(&str) + Sync)>,
+    ) {
+        self.factor_ids.clear();
+        self.numeric_feature_columns = feature_columns.to_vec();
+        let n_rows = feature_data.len();
+        let n_cols = feature_columns.len();
+        self.numeric_means = numeric_means(feature_data, n_cols);
+        self.numeric_scales = numeric_scales(feature_data, &self.numeric_means, n_cols);
+
+        let n_pos: f64 = target.iter().filter(|&&v| v > 0.5).count() as f64;
+        let n_neg = target.len() as f64 - n_pos;
+        self.base_rate = n_pos / (target.len() as f64).max(1.0);
+
+        if n_rows == 0 || n_cols == 0 || n_pos < 1.0 || n_neg < 1.0 {
+            self.weights = vec![0.0; n_cols];
+            self.intercept = if self.base_rate > 0.0 && self.base_rate < 1.0 {
+                (self.base_rate / (1.0 - self.base_rate)).ln()
+            } else if self.base_rate >= 1.0 {
+                10.0
+            } else {
+                -10.0
+            };
+            self.backend = "numeric_logistic_fallback_single_class".to_string();
+            return;
+        }
+
+        let pos_weight = target.len() as f64 / (2.0 * n_pos.max(1.0));
+        let neg_weight = target.len() as f64 / (2.0 * n_neg.max(1.0));
+        let class_weight = vec![neg_weight, pos_weight];
+        let _seed = random_state;
+
+        let (weights, intercept) = fit_numeric_logistic_parallel(NumericBatchFit {
+            feature_data,
+            target,
+            means: &self.numeric_means,
+            scales: &self.numeric_scales,
+            class_weight: &class_weight,
+            max_epochs: 40,
+            learning_rate: 0.8,
+            l2_penalty: 1.0,
+            progress,
+        });
+        self.weights = weights;
+        self.intercept = intercept;
+        self.backend = "numeric_parallel_logistic_regression".to_string();
+    }
+
+    pub fn predict_numeric_rows(&self, feature_data: &[Vec<f64>]) -> Vec<f64> {
+        if feature_data.is_empty() {
+            return Vec::new();
+        }
+        let n_cols = self
+            .numeric_feature_columns
+            .len()
+            .min(self.weights.len())
+            .min(self.numeric_means.len())
+            .min(self.numeric_scales.len());
+        feature_data
+            .par_iter()
+            .map(|row| {
+                let mut lin = self.intercept;
+                for col_idx in 0..n_cols {
+                    lin += self.weights[col_idx]
+                        * standardize_value(
+                            row.get(col_idx).copied().unwrap_or(f64::NAN),
+                            self.numeric_means[col_idx],
+                            self.numeric_scales[col_idx],
+                        );
+                }
+                sigmoid(lin.clamp(-30.0, 30.0))
+            })
+            .collect()
+    }
+
+    pub fn is_numeric_backend(&self) -> bool {
+        self.backend.starts_with("numeric_") && !self.numeric_feature_columns.is_empty()
     }
 
     /// Fit the model on discretized label data.
@@ -522,6 +900,110 @@ impl Default for OccurrenceProbabilityEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn numeric_means(feature_data: &[Vec<f64>], n_cols: usize) -> Vec<f64> {
+    (0..n_cols)
+        .map(|col_idx| {
+            let mut sum = 0.0;
+            let mut count = 0usize;
+            for row in feature_data {
+                let value = row.get(col_idx).copied().unwrap_or(f64::NAN);
+                if value.is_finite() {
+                    sum += value;
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                0.0
+            } else {
+                sum / count as f64
+            }
+        })
+        .collect()
+}
+
+fn numeric_scales(feature_data: &[Vec<f64>], means: &[f64], n_cols: usize) -> Vec<f64> {
+    (0..n_cols)
+        .map(|col_idx| {
+            let mean = means.get(col_idx).copied().unwrap_or(0.0);
+            let mut sum_sq = 0.0;
+            let mut count = 0usize;
+            for row in feature_data {
+                let value = row.get(col_idx).copied().unwrap_or(f64::NAN);
+                if value.is_finite() {
+                    let centered = value - mean;
+                    sum_sq += centered * centered;
+                    count += 1;
+                }
+            }
+            if count <= 1 {
+                1.0
+            } else {
+                let std = (sum_sq / count as f64).sqrt();
+                if std.is_finite() && std > 1e-12 {
+                    std
+                } else {
+                    1.0
+                }
+            }
+        })
+        .collect()
+}
+
+fn standardize_value(value: f64, mean: f64, scale: f64) -> f64 {
+    let filled = if value.is_finite() { value } else { mean };
+    let scale = if scale.is_finite() && scale > 1e-12 {
+        scale
+    } else {
+        1.0
+    };
+    ((filled - mean) / scale).clamp(-10.0, 10.0)
+}
+
+fn progress_log(progress: Option<&(dyn Fn(&str) + Sync)>, message: String) {
+    if let Some(progress) = progress {
+        progress(&message);
+    }
+}
+
+fn progress_rows(
+    progress: Option<&(dyn Fn(&str) + Sync)>,
+    component: &str,
+    iteration: usize,
+    max_iterations: usize,
+    pass: &str,
+    completed_rows: usize,
+    total_rows: usize,
+    last_bucket: &mut usize,
+) {
+    if progress.is_none() || total_rows == 0 {
+        return;
+    }
+    let bucket = if completed_rows >= total_rows {
+        4
+    } else {
+        (completed_rows.saturating_mul(4)) / total_rows
+    };
+    if bucket == 0 && completed_rows < total_rows {
+        return;
+    }
+    if *last_bucket != usize::MAX && bucket <= *last_bucket && completed_rows < total_rows {
+        return;
+    }
+    *last_bucket = bucket;
+    let prefix = if iteration > 0 && max_iterations > 0 {
+        format!("{component} iteration {iteration}/{max_iterations}")
+    } else {
+        component.to_string()
+    };
+    progress_log(
+        progress,
+        format!(
+            "[{prefix}] {pass}: rows {completed_rows}/{total_rows} ({:.1}%)",
+            100.0 * completed_rows as f64 / total_rows as f64
+        ),
+    );
 }
 
 // ── DisturbanceClassEngine ─────────────────────────────────────

@@ -1,12 +1,12 @@
 [package]
-name = "cli"
+name = "if-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "cli"
+name = "if-cli"
 path = "src/main.rs"
 
 [dependencies]

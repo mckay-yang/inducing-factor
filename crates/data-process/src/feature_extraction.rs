@@ -126,9 +126,7 @@ pub fn extract_training_features_with_workers(
         .collect();
 
     let dem_path = format!("{}/dem.tif", resampled_str);
-    let landuse_path = format!("{}/landuse/landuse.tif", resampled_str);
     let river_path = format!("{}/river/river_dist.tif", resampled_str);
-    let resident_path = format!("{}/resident/resident.tif", resampled_str);
 
     // ── allocate output vectors ────────────────────────────────────────
     let mut out_elevation: Vec<f64> = vec![f64::NAN; n];
@@ -139,42 +137,20 @@ pub fn extract_training_features_with_workers(
     let mut out_dist_to_road: Vec<f64> = vec![f64::NAN; n];
     let mut out_dist_to_railway: Vec<f64> = vec![f64::NAN; n];
     let mut out_dist_to_waterway: Vec<f64> = vec![f64::NAN; n];
+    let mut out_dist_to_urban_settlement: Vec<f64> = vec![f64::NAN; n];
+    let mut out_dist_to_rural_settlement: Vec<f64> = vec![f64::NAN; n];
     let mut out_resident: Vec<f64> = vec![f64::NAN; n];
-    let mut out_rainfall: [Vec<f64>; 12] = [
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-    ];
-    let mut out_temp: [Vec<f64>; 12] = [
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-        vec![f64::NAN; n],
-    ];
-    let mut out_rainfall_prev_1m: Vec<f64> = vec![f64::NAN; n];
-    let mut out_rainfall_prev_2m: Vec<f64> = vec![f64::NAN; n];
-    let mut out_rainfall_prev_3m: Vec<f64> = vec![f64::NAN; n];
-    let mut out_rainfall_prev_total_3m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_rainfall_avg_prev_1m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_rainfall_avg_prev_3m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_rainfall_avg_prev_6m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_rainfall_avg_prev_12m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_temp_avg_prev_1m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_temp_avg_prev_3m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_temp_avg_prev_6m: Vec<f64> = vec![f64::NAN; n];
+    let mut out_temp_avg_prev_12m: Vec<f64> = vec![f64::NAN; n];
 
     let workers = effective_workers(workers);
-    eprintln!(
+    crate::status!(
         "[features][train] extracting {} training rows with mmap point cache at {}",
         n,
         cache_dir.display()
@@ -193,32 +169,10 @@ pub fn extract_training_features_with_workers(
 
     #[cfg(feature = "gdal")]
     if let Some(values) =
-        point_values_from_raster(&landuse_path, &point_rows, &point_cols, &cache_dir, workers)?
-    {
-        for i in 0..n {
-            out_landuse[i] = values.get_i32(i).unwrap_or(0);
-        }
-    }
-
-    #[cfg(feature = "gdal")]
-    if let Some(values) =
         point_values_from_raster(&river_path, &point_rows, &point_cols, &cache_dir, workers)?
     {
         for i in 0..n {
             out_dist_to_river[i] = values.get_f64(i).unwrap_or(f64::NAN);
-        }
-    }
-
-    #[cfg(feature = "gdal")]
-    if let Some(values) = point_values_from_raster(
-        &resident_path,
-        &point_rows,
-        &point_cols,
-        &cache_dir,
-        workers,
-    )? {
-        for i in 0..n {
-            out_resident[i] = values.get_f64(i).unwrap_or(f64::NAN);
         }
     }
 
@@ -228,9 +182,56 @@ pub fn extract_training_features_with_workers(
         let year_rows: Vec<usize> = indices.iter().map(|&i| point_rows[i]).collect();
         let year_cols: Vec<usize> = indices.iter().map(|&i| point_cols[i]).collect();
 
+        let landuse_path = find_landuse_raster(&resampled_str, *year);
+        let resident_path = find_resident_raster(&resampled_str, *year);
+        let urban_settlement_path =
+            find_settlement_raster(&resampled_str, "urban_settlement_dist", *year);
+        let rural_settlement_path =
+            find_settlement_raster(&resampled_str, "rural_settlement_dist", *year);
         let road_path = find_road_raster(&resampled_str, "road_dist", *year);
         let railway_path = find_road_raster(&resampled_str, "railway_dist", *year);
         let waterway_path = find_road_raster(&resampled_str, "waterway_dist", *year);
+
+        #[cfg(feature = "gdal")]
+        if let Some(values) =
+            point_values_from_raster(&landuse_path, &year_rows, &year_cols, &cache_dir, workers)?
+        {
+            for (j, &i) in indices.iter().enumerate() {
+                out_landuse[i] = values.get_i32(j).unwrap_or(0);
+            }
+        }
+        #[cfg(feature = "gdal")]
+        if let Some(values) =
+            point_values_from_raster(&resident_path, &year_rows, &year_cols, &cache_dir, workers)?
+        {
+            for (j, &i) in indices.iter().enumerate() {
+                out_resident[i] = values.get_f64(j).unwrap_or(f64::NAN);
+            }
+        }
+        #[cfg(feature = "gdal")]
+        if let Some(values) = point_values_from_raster(
+            &urban_settlement_path,
+            &year_rows,
+            &year_cols,
+            &cache_dir,
+            workers,
+        )? {
+            for (j, &i) in indices.iter().enumerate() {
+                out_dist_to_urban_settlement[i] = values.get_f64(j).unwrap_or(f64::NAN);
+            }
+        }
+        #[cfg(feature = "gdal")]
+        if let Some(values) = point_values_from_raster(
+            &rural_settlement_path,
+            &year_rows,
+            &year_cols,
+            &cache_dir,
+            workers,
+        )? {
+            for (j, &i) in indices.iter().enumerate() {
+                out_dist_to_rural_settlement[i] = values.get_f64(j).unwrap_or(f64::NAN);
+            }
+        }
 
         #[cfg(feature = "gdal")]
         if let Some(values) =
@@ -278,30 +279,72 @@ pub fn extract_training_features_with_workers(
                 .ok()
                 .flatten()
         });
+        #[cfg(feature = "gdal")]
+        let prev_temp_values: [Option<CachedRasterValues>; 12] = std::array::from_fn(|m| {
+            let tp = find_temperature_raster(&resampled_str, year - 1, m as i32 + 1);
+            point_values_from_raster(&tp, &year_rows, &year_cols, &cache_dir, workers)
+                .ok()
+                .flatten()
+        });
 
         #[cfg(feature = "gdal")]
         for (j, &i) in indices.iter().enumerate() {
-            for m in 0..12 {
-                if let Some(ref values) = rainfall_values[m] {
-                    out_rainfall[m][i] = values.get_f64(j).unwrap_or(f64::NAN);
-                }
-                if let Some(ref values) = temp_values[m] {
-                    out_temp[m][i] = values.get_f64(j).unwrap_or(f64::NAN);
-                }
-            }
-
-            let (prev_1m, prev_2m, prev_3m) = compute_3month_preceding_rainfall_cached(
+            out_rainfall_avg_prev_1m[i] = compute_preceding_climate_mean_cached(
                 timings.get(i),
                 j,
+                1,
                 &rainfall_values,
                 &prev_rainfall_values,
             );
-            out_rainfall_prev_1m[i] = prev_1m;
-            out_rainfall_prev_2m[i] = prev_2m;
-            out_rainfall_prev_3m[i] = prev_3m;
-            if prev_1m.is_finite() && prev_2m.is_finite() && prev_3m.is_finite() {
-                out_rainfall_prev_total_3m[i] = prev_1m + prev_2m + prev_3m;
-            }
+            out_rainfall_avg_prev_3m[i] = compute_preceding_climate_mean_cached(
+                timings.get(i),
+                j,
+                3,
+                &rainfall_values,
+                &prev_rainfall_values,
+            );
+            out_rainfall_avg_prev_6m[i] = compute_preceding_climate_mean_cached(
+                timings.get(i),
+                j,
+                6,
+                &rainfall_values,
+                &prev_rainfall_values,
+            );
+            out_rainfall_avg_prev_12m[i] = compute_preceding_climate_mean_cached(
+                timings.get(i),
+                j,
+                12,
+                &rainfall_values,
+                &prev_rainfall_values,
+            );
+            out_temp_avg_prev_1m[i] = compute_preceding_climate_mean_cached(
+                timings.get(i),
+                j,
+                1,
+                &temp_values,
+                &prev_temp_values,
+            );
+            out_temp_avg_prev_3m[i] = compute_preceding_climate_mean_cached(
+                timings.get(i),
+                j,
+                3,
+                &temp_values,
+                &prev_temp_values,
+            );
+            out_temp_avg_prev_6m[i] = compute_preceding_climate_mean_cached(
+                timings.get(i),
+                j,
+                6,
+                &temp_values,
+                &prev_temp_values,
+            );
+            out_temp_avg_prev_12m[i] = compute_preceding_climate_mean_cached(
+                timings.get(i),
+                j,
+                12,
+                &temp_values,
+                &prev_temp_values,
+            );
         }
     }
 
@@ -327,31 +370,39 @@ pub fn extract_training_features_with_workers(
     cols.push(Column::new("dist_to_road".into(), out_dist_to_road));
     cols.push(Column::new("dist_to_railway".into(), out_dist_to_railway));
     cols.push(Column::new("dist_to_waterway".into(), out_dist_to_waterway));
+    cols.push(Column::new(
+        "dist_to_urban_settlement".into(),
+        out_dist_to_urban_settlement,
+    ));
+    cols.push(Column::new(
+        "dist_to_rural_settlement".into(),
+        out_dist_to_rural_settlement,
+    ));
     cols.push(Column::new("resident".into(), out_resident));
 
-    // Monthly rainfall.
-    for m in 0..12 {
-        let name = format!("rainfall_month_{:02}", m + 1);
-        cols.push(Column::new(
-            name.into(),
-            std::mem::take(&mut out_rainfall[m]),
-        ));
-    }
-
-    // 3-month preceding rainfall.
-    cols.push(Column::new("rainfall_prev_1m".into(), out_rainfall_prev_1m));
-    cols.push(Column::new("rainfall_prev_2m".into(), out_rainfall_prev_2m));
-    cols.push(Column::new("rainfall_prev_3m".into(), out_rainfall_prev_3m));
     cols.push(Column::new(
-        "rainfall_prev_total_3m".into(),
-        out_rainfall_prev_total_3m,
+        "rainfall_avg_prev_1m".into(),
+        out_rainfall_avg_prev_1m,
     ));
-
-    // Monthly temperature.
-    for m in 0..12 {
-        let name = format!("temp_month_{:02}", m + 1);
-        cols.push(Column::new(name.into(), std::mem::take(&mut out_temp[m])));
-    }
+    cols.push(Column::new(
+        "rainfall_avg_prev_3m".into(),
+        out_rainfall_avg_prev_3m,
+    ));
+    cols.push(Column::new(
+        "rainfall_avg_prev_6m".into(),
+        out_rainfall_avg_prev_6m,
+    ));
+    cols.push(Column::new(
+        "rainfall_avg_prev_12m".into(),
+        out_rainfall_avg_prev_12m,
+    ));
+    cols.push(Column::new("temp_avg_prev_1m".into(), out_temp_avg_prev_1m));
+    cols.push(Column::new("temp_avg_prev_3m".into(), out_temp_avg_prev_3m));
+    cols.push(Column::new("temp_avg_prev_6m".into(), out_temp_avg_prev_6m));
+    cols.push(Column::new(
+        "temp_avg_prev_12m".into(),
+        out_temp_avg_prev_12m,
+    ));
 
     let mut out_df =
         DataFrame::new(cols).map_err(|e| LoaderError::Gdal(format!("build DataFrame: {e}")))?;
@@ -427,7 +478,7 @@ pub fn extract_prediction_features_with_workers(
     let n_tile_cols = (width + tile_size - 1) / tile_size;
     let total_tiles = n_tile_rows * n_tile_cols;
 
-    eprintln!(
+    crate::status!(
         "[predict] CLASS grid: {}×{}, tile size: {}, tiles: {}×{} = {}, workers: {}",
         width,
         height,
@@ -440,10 +491,21 @@ pub fn extract_prediction_features_with_workers(
 
     // Use previous year for data if target_year not yet available.
     let data_year = resolve_data_year(resampled, target_year);
-    eprintln!(
+    crate::status!(
         "[predict] Target year {}, using data year {}",
-        target_year, data_year
+        target_year,
+        data_year
     );
+
+    let existing_tiles = count_nonempty_prediction_tiles(output_dir)?;
+    if existing_tiles > 0 {
+        crate::status!(
+            "[predict] Feature extraction cache exists, fast skip: {} non-empty parquet tiles in {}",
+            existing_tiles,
+            output_dir
+        );
+        return Ok(existing_tiles);
+    }
 
     let resampled_str = resampled.to_string_lossy().to_string();
     let sources = PredictionFeatureSources::new(&resampled_str, target_year, data_year);
@@ -468,6 +530,7 @@ pub fn extract_prediction_features_with_workers(
         .map_err(|e| LoaderError::Gdal(format!("prediction feature thread pool: {e}")))?;
 
     let tiles_written = AtomicUsize::new(0);
+    let tiles_cached = AtomicUsize::new(0);
     let tasks_seen = AtomicUsize::new(0);
     pool.install(|| {
         tasks.par_iter().try_for_each(|task| {
@@ -477,7 +540,7 @@ pub fn extract_prediction_features_with_workers(
             if wrote_tile {
                 let written = tiles_written.fetch_add(1, Ordering::Relaxed) + 1;
                 if written % 10 == 0 || written == 1 {
-                    eprintln!(
+                    crate::status!(
                         "[predict] Tiles written: {} (tasks completed {}/{}, {:.1}%) - tile_{:06}_{:06}.parquet ({}×{} = {} px)",
                         written,
                         task_idx,
@@ -490,17 +553,52 @@ pub fn extract_prediction_features_with_workers(
                         task.tile_w * task.tile_h
                     );
                 }
+            } else {
+                tiles_cached.fetch_add(1, Ordering::Relaxed);
+            }
+            if task_idx == 1 || task_idx % 500 == 0 || task_idx == total_tiles {
+                let written = tiles_written.load(Ordering::Relaxed);
+                let cached = tiles_cached.load(Ordering::Relaxed);
+                crate::status!(
+                    "[predict] Feature extraction progress: tasks completed {}/{}, {:.1}%, written={}, cached_or_empty={}",
+                    task_idx,
+                    total_tiles,
+                    100.0 * task_idx as f64 / total_tiles as f64,
+                    written,
+                    cached
+                );
             }
             Ok::<(), LoaderError>(())
         })
     })?;
     let tiles_written = tiles_written.load(Ordering::Relaxed);
 
-    eprintln!(
+    crate::status!(
         "[predict] Feature extraction complete: {} tiles written to {}",
-        tiles_written, output_dir
+        tiles_written,
+        output_dir
     );
     Ok(tiles_written)
+}
+
+fn count_nonempty_prediction_tiles(output_dir: &str) -> LoaderResult<usize> {
+    let mut count = 0usize;
+    for entry in std::fs::read_dir(output_dir).map_err(LoaderError::Io)? {
+        let entry = entry.map_err(LoaderError::Io)?;
+        let path = entry.path();
+        let is_parquet = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("parquet"))
+            .unwrap_or(false);
+        if !is_parquet {
+            continue;
+        }
+        if entry.metadata().map_err(LoaderError::Io)?.len() > 0 {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 #[derive(Debug, Clone)]
@@ -517,12 +615,15 @@ struct PredictionFeatureSources {
     landuse_path: String,
     river_path: String,
     resident_path: String,
+    urban_settlement_path: String,
+    rural_settlement_path: String,
     road_path: String,
     railway_path: String,
     waterway_path: String,
     rainfall_paths: [String; 12],
     prev_rainfall_paths: [String; 12],
     temp_paths: [String; 12],
+    prev_temp_paths: [String; 12],
 }
 
 impl PredictionFeatureSources {
@@ -535,17 +636,31 @@ impl PredictionFeatureSources {
         let temp_paths = std::array::from_fn(|m| {
             find_temperature_raster(resampled_dir, data_year, m as i32 + 1)
         });
+        let prev_temp_paths = std::array::from_fn(|m| {
+            find_temperature_raster(resampled_dir, data_year - 1, m as i32 + 1)
+        });
         Self {
             dem_path: format!("{}/dem.tif", resampled_dir),
-            landuse_path: format!("{}/landuse/landuse.tif", resampled_dir),
+            landuse_path: find_landuse_raster(resampled_dir, target_year),
             river_path: format!("{}/river/river_dist.tif", resampled_dir),
-            resident_path: format!("{}/resident/resident.tif", resampled_dir),
+            resident_path: find_resident_raster(resampled_dir, target_year),
+            urban_settlement_path: find_settlement_raster(
+                resampled_dir,
+                "urban_settlement_dist",
+                target_year,
+            ),
+            rural_settlement_path: find_settlement_raster(
+                resampled_dir,
+                "rural_settlement_dist",
+                target_year,
+            ),
             road_path: find_road_raster(resampled_dir, "road_dist", target_year),
             railway_path: find_road_raster(resampled_dir, "railway_dist", target_year),
             waterway_path: find_road_raster(resampled_dir, "waterway_dist", target_year),
             rainfall_paths,
             prev_rainfall_paths,
             temp_paths,
+            prev_temp_paths,
         }
     }
 }
@@ -557,6 +672,17 @@ fn write_prediction_tile(
     sources: &PredictionFeatureSources,
     output_dir: &str,
 ) -> LoaderResult<bool> {
+    let tile_path = format!(
+        "{}/tile_{:06}_{:06}.parquet",
+        output_dir, task.tile_row, task.tile_col
+    );
+    if std::fs::metadata(&tile_path)
+        .map(|meta| meta.len() > 0)
+        .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+
     let aoi_tile_mask = aoi_mask.tile_mask(
         class_grid,
         task.tile_row,
@@ -569,10 +695,15 @@ fn write_prediction_tile(
         return Ok(false);
     }
 
+    let tmp_path = format!("{tile_path}.tmp");
+    let _ = std::fs::remove_file(&tmp_path);
+
     let dem_ds = open_raster_optional(&sources.dem_path);
     let landuse_ds = open_raster_optional(&sources.landuse_path);
     let river_ds = open_raster_optional(&sources.river_path);
     let resident_ds = open_raster_optional(&sources.resident_path);
+    let urban_settlement_ds = open_raster_optional(&sources.urban_settlement_path);
+    let rural_settlement_ds = open_raster_optional(&sources.rural_settlement_path);
     let road_ds = open_raster_optional(&sources.road_path);
     let railway_ds = open_raster_optional(&sources.railway_path);
     let waterway_ds = open_raster_optional(&sources.waterway_path);
@@ -603,6 +734,12 @@ fn write_prediction_tile(
     let resident_window = resident_ds
         .as_ref()
         .and_then(|ds| read_task_window(ds, task));
+    let urban_settlement_window = urban_settlement_ds
+        .as_ref()
+        .and_then(|ds| read_task_window(ds, task));
+    let rural_settlement_window = rural_settlement_ds
+        .as_ref()
+        .and_then(|ds| read_task_window(ds, task));
     let road_window = road_ds.as_ref().and_then(|ds| read_task_window(ds, task));
     let railway_window = railway_ds
         .as_ref()
@@ -621,6 +758,9 @@ fn write_prediction_tile(
     let temp_windows: [Option<RasterWindow>; 12] = std::array::from_fn(|m| {
         open_raster_optional(&sources.temp_paths[m]).and_then(|ds| read_task_window(&ds, task))
     });
+    let prev_temp_windows: [Option<RasterWindow>; 12] = std::array::from_fn(|m| {
+        open_raster_optional(&sources.prev_temp_paths[m]).and_then(|ds| read_task_window(&ds, task))
+    });
 
     let mut out_rows: Vec<i32> = Vec::with_capacity(n_pixels);
     let mut out_cols: Vec<i32> = Vec::with_capacity(n_pixels);
@@ -632,13 +772,17 @@ fn write_prediction_tile(
     let mut out_dist_to_road: Vec<f64> = vec![f64::NAN; n_pixels];
     let mut out_dist_to_railway: Vec<f64> = vec![f64::NAN; n_pixels];
     let mut out_dist_to_waterway: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_dist_to_urban_settlement: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_dist_to_rural_settlement: Vec<f64> = vec![f64::NAN; n_pixels];
     let mut out_resident: Vec<f64> = vec![f64::NAN; n_pixels];
-    let mut out_rainfall: [Vec<f64>; 12] = std::array::from_fn(|_| vec![f64::NAN; n_pixels]);
-    let mut out_rainfall_prev_1m: Vec<f64> = vec![f64::NAN; n_pixels];
-    let mut out_rainfall_prev_2m: Vec<f64> = vec![f64::NAN; n_pixels];
-    let mut out_rainfall_prev_3m: Vec<f64> = vec![f64::NAN; n_pixels];
-    let mut out_rainfall_prev_total_3m: Vec<f64> = vec![f64::NAN; n_pixels];
-    let mut out_temp: [Vec<f64>; 12] = std::array::from_fn(|_| vec![f64::NAN; n_pixels]);
+    let mut out_rainfall_avg_prev_1m: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_rainfall_avg_prev_3m: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_rainfall_avg_prev_6m: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_rainfall_avg_prev_12m: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_temp_avg_prev_1m: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_temp_avg_prev_3m: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_temp_avg_prev_6m: Vec<f64> = vec![f64::NAN; n_pixels];
+    let mut out_temp_avg_prev_12m: Vec<f64> = vec![f64::NAN; n_pixels];
 
     for dy in 0..task.tile_h {
         for dx in 0..task.tile_w {
@@ -676,32 +820,80 @@ fn write_prediction_tile(
             if let Some(ref window) = waterway_window {
                 out_dist_to_waterway[pi] = window.get_f64(r, c).unwrap_or(f64::NAN);
             }
+            if let Some(ref window) = urban_settlement_window {
+                out_dist_to_urban_settlement[pi] = window.get_f64(r, c).unwrap_or(f64::NAN);
+            }
+            if let Some(ref window) = rural_settlement_window {
+                out_dist_to_rural_settlement[pi] = window.get_f64(r, c).unwrap_or(f64::NAN);
+            }
             if let Some(ref window) = resident_window {
                 out_resident[pi] = window.get_f64(r, c).unwrap_or(f64::NAN);
             }
 
-            for m in 0..12 {
-                if let Some(ref window) = rainfall_windows[m] {
-                    out_rainfall[m][pi] = window.get_f64(r, c).unwrap_or(f64::NAN);
-                }
-                if let Some(ref window) = temp_windows[m] {
-                    out_temp[m][pi] = window.get_f64(r, c).unwrap_or(f64::NAN);
-                }
-            }
-
-            let (prev_1m, prev_2m, prev_3m) = compute_3month_preceding_rainfall_windows(
+            out_rainfall_avg_prev_1m[pi] = compute_preceding_climate_mean_windows(
                 None,
                 r,
                 c,
+                1,
                 &rainfall_windows,
                 &prev_rainfall_windows,
             );
-            out_rainfall_prev_1m[pi] = prev_1m;
-            out_rainfall_prev_2m[pi] = prev_2m;
-            out_rainfall_prev_3m[pi] = prev_3m;
-            if prev_1m.is_finite() && prev_2m.is_finite() && prev_3m.is_finite() {
-                out_rainfall_prev_total_3m[pi] = prev_1m + prev_2m + prev_3m;
-            }
+            out_rainfall_avg_prev_3m[pi] = compute_preceding_climate_mean_windows(
+                None,
+                r,
+                c,
+                3,
+                &rainfall_windows,
+                &prev_rainfall_windows,
+            );
+            out_rainfall_avg_prev_6m[pi] = compute_preceding_climate_mean_windows(
+                None,
+                r,
+                c,
+                6,
+                &rainfall_windows,
+                &prev_rainfall_windows,
+            );
+            out_rainfall_avg_prev_12m[pi] = compute_preceding_climate_mean_windows(
+                None,
+                r,
+                c,
+                12,
+                &rainfall_windows,
+                &prev_rainfall_windows,
+            );
+            out_temp_avg_prev_1m[pi] = compute_preceding_climate_mean_windows(
+                None,
+                r,
+                c,
+                1,
+                &temp_windows,
+                &prev_temp_windows,
+            );
+            out_temp_avg_prev_3m[pi] = compute_preceding_climate_mean_windows(
+                None,
+                r,
+                c,
+                3,
+                &temp_windows,
+                &prev_temp_windows,
+            );
+            out_temp_avg_prev_6m[pi] = compute_preceding_climate_mean_windows(
+                None,
+                r,
+                c,
+                6,
+                &temp_windows,
+                &prev_temp_windows,
+            );
+            out_temp_avg_prev_12m[pi] = compute_preceding_climate_mean_windows(
+                None,
+                r,
+                c,
+                12,
+                &temp_windows,
+                &prev_temp_windows,
+            );
         }
     }
 
@@ -716,29 +908,39 @@ fn write_prediction_tile(
     cols.push(Column::new("dist_to_road".into(), out_dist_to_road));
     cols.push(Column::new("dist_to_railway".into(), out_dist_to_railway));
     cols.push(Column::new("dist_to_waterway".into(), out_dist_to_waterway));
+    cols.push(Column::new(
+        "dist_to_urban_settlement".into(),
+        out_dist_to_urban_settlement,
+    ));
+    cols.push(Column::new(
+        "dist_to_rural_settlement".into(),
+        out_dist_to_rural_settlement,
+    ));
     cols.push(Column::new("resident".into(), out_resident));
 
-    for m in 0..12 {
-        cols.push(Column::new(
-            format!("rainfall_month_{:02}", m + 1).into(),
-            std::mem::take(&mut out_rainfall[m]),
-        ));
-    }
-
-    cols.push(Column::new("rainfall_prev_1m".into(), out_rainfall_prev_1m));
-    cols.push(Column::new("rainfall_prev_2m".into(), out_rainfall_prev_2m));
-    cols.push(Column::new("rainfall_prev_3m".into(), out_rainfall_prev_3m));
     cols.push(Column::new(
-        "rainfall_prev_total_3m".into(),
-        out_rainfall_prev_total_3m,
+        "rainfall_avg_prev_1m".into(),
+        out_rainfall_avg_prev_1m,
     ));
-
-    for m in 0..12 {
-        cols.push(Column::new(
-            format!("temp_month_{:02}", m + 1).into(),
-            std::mem::take(&mut out_temp[m]),
-        ));
-    }
+    cols.push(Column::new(
+        "rainfall_avg_prev_3m".into(),
+        out_rainfall_avg_prev_3m,
+    ));
+    cols.push(Column::new(
+        "rainfall_avg_prev_6m".into(),
+        out_rainfall_avg_prev_6m,
+    ));
+    cols.push(Column::new(
+        "rainfall_avg_prev_12m".into(),
+        out_rainfall_avg_prev_12m,
+    ));
+    cols.push(Column::new("temp_avg_prev_1m".into(), out_temp_avg_prev_1m));
+    cols.push(Column::new("temp_avg_prev_3m".into(), out_temp_avg_prev_3m));
+    cols.push(Column::new("temp_avg_prev_6m".into(), out_temp_avg_prev_6m));
+    cols.push(Column::new(
+        "temp_avg_prev_12m".into(),
+        out_temp_avg_prev_12m,
+    ));
 
     let row_count = out_rows_len_from_columns(&cols)?;
     if row_count == 0 {
@@ -747,11 +949,6 @@ fn write_prediction_tile(
 
     let mut df = DataFrame::new(cols)
         .map_err(|e| LoaderError::Gdal(format!("build tile DataFrame: {e}")))?;
-    let tile_path = format!(
-        "{}/tile_{:06}_{:06}.parquet",
-        output_dir, task.tile_row, task.tile_col
-    );
-    let tmp_path = format!("{tile_path}.tmp");
     let mut f = std::fs::File::create(&tmp_path).map_err(LoaderError::Io)?;
     let write_result = ParquetWriter::new(&mut f)
         .set_parallel(false)
@@ -1017,7 +1214,7 @@ fn point_values_from_raster(
         return mmap_cached_values(&cache_path, rows.len()).map(Some);
     }
 
-    eprintln!(
+    crate::status!(
         "[features][train] building point cache: {} ({} points)",
         path,
         rows.len()
@@ -1053,7 +1250,7 @@ fn dem_feature_values_from_raster(
         }));
     }
 
-    eprintln!(
+    crate::status!(
         "[features][train] building DEM feature cache: {} ({} points)",
         path,
         rows.len()
@@ -1429,6 +1626,53 @@ fn compute_3month_preceding_rainfall_cached(
     (prev_1m, prev_2m, prev_3m)
 }
 
+#[cfg(feature = "gdal")]
+fn compute_preceding_climate_mean_cached(
+    ccdc_timing: Option<f32>,
+    point_idx: usize,
+    window_months: usize,
+    current_year: &[Option<CachedRasterValues>; 12],
+    prev_year: &[Option<CachedRasterValues>; 12],
+) -> f64 {
+    let disturbance_month = timing_to_month(ccdc_timing);
+    if !(1..=12).contains(&disturbance_month) || window_months == 0 {
+        return f64::NAN;
+    }
+    let mut sum = 0.0;
+    let mut count = 0usize;
+    let m = disturbance_month as isize;
+    for offset in 1..=window_months.min(12) {
+        let month = m - offset as isize;
+        let value = if month >= 1 {
+            cached_month_value(current_year, point_idx, (month - 1) as usize)
+        } else {
+            cached_month_value(prev_year, point_idx, (month + 11) as usize)
+        };
+        if value.is_finite() {
+            sum += value;
+            count += 1;
+        }
+    }
+    if count > 0 {
+        sum / count as f64
+    } else {
+        f64::NAN
+    }
+}
+
+#[cfg(feature = "gdal")]
+fn cached_month_value(
+    values: &[Option<CachedRasterValues>; 12],
+    point_idx: usize,
+    month_idx: usize,
+) -> f64 {
+    values
+        .get(month_idx)
+        .and_then(|v| v.as_ref())
+        .and_then(|v| v.get_f64(point_idx))
+        .unwrap_or(f64::NAN)
+}
+
 // ── GDAL pixel read helpers ────────────────────────────────────────────
 
 #[cfg(feature = "gdal")]
@@ -1715,6 +1959,46 @@ fn find_road_raster(resampled_dir: &str, prefix: &str, year: i32) -> String {
     path
 }
 
+fn find_landuse_raster(resampled_dir: &str, year: i32) -> String {
+    find_yearly_raster_with_history(resampled_dir, "landuse", "landuse", year, 10, "tif")
+}
+
+fn find_resident_raster(resampled_dir: &str, year: i32) -> String {
+    find_yearly_raster_with_history(resampled_dir, "resident", "resident", year, 30, "tif")
+}
+
+fn find_settlement_raster(resampled_dir: &str, prefix: &str, year: i32) -> String {
+    find_yearly_raster_with_history(resampled_dir, "settlement", prefix, year, 30, "tif")
+}
+
+fn find_yearly_raster_with_history(
+    resampled_dir: &str,
+    subdir: &str,
+    prefix: &str,
+    year: i32,
+    max_back: i32,
+    extension: &str,
+) -> String {
+    let path = format!(
+        "{}/{}/{}_{}.{}",
+        resampled_dir, subdir, prefix, year, extension
+    );
+    if Path::new(&path).exists() {
+        return path;
+    }
+    for offset in 1..=max_back {
+        let prev_year = year - offset;
+        let fallback = format!(
+            "{}/{}/{}_{}.{}",
+            resampled_dir, subdir, prefix, prev_year, extension
+        );
+        if Path::new(&fallback).exists() {
+            return fallback;
+        }
+    }
+    path
+}
+
 /// Find a monthly rainfall raster with year fallback.
 ///
 /// Tries `pre{year}{month:02}.tif`, then year-1 ... year-10.
@@ -1883,6 +2167,53 @@ fn compute_3month_preceding_rainfall_windows(
     (prev_1m, prev_2m, prev_3m)
 }
 
+fn compute_preceding_climate_mean_windows(
+    ccdc_timing: Option<f32>,
+    row: usize,
+    col: usize,
+    window_months: usize,
+    current_year: &[Option<RasterWindow>; 12],
+    prev_year: &[Option<RasterWindow>; 12],
+) -> f64 {
+    let disturbance_month = timing_to_month(ccdc_timing);
+    if !(1..=12).contains(&disturbance_month) || window_months == 0 {
+        return f64::NAN;
+    }
+    let mut sum = 0.0;
+    let mut count = 0usize;
+    let m = disturbance_month as isize;
+    for offset in 1..=window_months.min(12) {
+        let month = m - offset as isize;
+        let value = if month >= 1 {
+            window_month_value(current_year, row, col, (month - 1) as usize)
+        } else {
+            window_month_value(prev_year, row, col, (month + 11) as usize)
+        };
+        if value.is_finite() {
+            sum += value;
+            count += 1;
+        }
+    }
+    if count > 0 {
+        sum / count as f64
+    } else {
+        f64::NAN
+    }
+}
+
+fn window_month_value(
+    values: &[Option<RasterWindow>; 12],
+    row: usize,
+    col: usize,
+    month_idx: usize,
+) -> f64 {
+    values
+        .get(month_idx)
+        .and_then(|window| window.as_ref())
+        .and_then(|window| window.get_f64(row, col))
+        .unwrap_or(f64::NAN)
+}
+
 /// Convert a CCDC fractional-year timing to a 1-based month.
 ///
 /// For example, 2017.42 → `month = ((0.42) * 12).ceil() = 6` (June).
@@ -2034,6 +2365,7 @@ mod tests {
             let rainfall_dir = resampled.join("rainfall");
             let temp_dir = resampled.join("temperature");
             let resident_dir = resampled.join("resident");
+            let settlement_dir = resampled.join("settlement");
 
             for d in [
                 dem_dir,
@@ -2043,6 +2375,7 @@ mod tests {
                 &rainfall_dir,
                 &temp_dir,
                 &resident_dir,
+                &settlement_dir,
             ] {
                 std::fs::create_dir_all(d).unwrap();
             }
@@ -2051,7 +2384,7 @@ mod tests {
             let dem_path = dem_dir.join("dem.tif");
             write_test_tif(dem_path.to_str().unwrap(), 5, 5, 100.0);
 
-            let landuse_path = landuse_dir.join("landuse.tif");
+            let landuse_path = landuse_dir.join("landuse_2018.tif");
             write_test_tif(landuse_path.to_str().unwrap(), 5, 5, 1.0);
 
             let river_path = river_dir.join("river_dist.tif");
@@ -2066,8 +2399,14 @@ mod tests {
             let waterway_path = road_dir.join("waterway_dist_2018.tif");
             write_test_tif(waterway_path.to_str().unwrap(), 5, 5, 3000.0);
 
-            let resident_path = resident_dir.join("resident.tif");
+            let resident_path = resident_dir.join("resident_2018.tif");
             write_test_tif(resident_path.to_str().unwrap(), 5, 5, 50.0);
+
+            let urban_settlement_path = settlement_dir.join("urban_settlement_dist_2018.tif");
+            write_test_tif(urban_settlement_path.to_str().unwrap(), 5, 5, 4000.0);
+
+            let rural_settlement_path = settlement_dir.join("rural_settlement_dist_2018.tif");
+            write_test_tif(rural_settlement_path.to_str().unwrap(), 5, 5, 5000.0);
 
             for m in 1..=12 {
                 let rp = rainfall_dir.join(format!("pre2018{:02}.tif", m));
@@ -2123,34 +2462,16 @@ mod tests {
                 "dist_to_railway",
                 "dist_to_waterway",
                 "resident",
-                "rainfall_month_01",
-                "rainfall_month_02",
-                "rainfall_month_03",
-                "rainfall_month_04",
-                "rainfall_month_05",
-                "rainfall_month_06",
-                "rainfall_month_07",
-                "rainfall_month_08",
-                "rainfall_month_09",
-                "rainfall_month_10",
-                "rainfall_month_11",
-                "rainfall_month_12",
-                "rainfall_prev_1m",
-                "rainfall_prev_2m",
-                "rainfall_prev_3m",
-                "rainfall_prev_total_3m",
-                "temp_month_01",
-                "temp_month_02",
-                "temp_month_03",
-                "temp_month_04",
-                "temp_month_05",
-                "temp_month_06",
-                "temp_month_07",
-                "temp_month_08",
-                "temp_month_09",
-                "temp_month_10",
-                "temp_month_11",
-                "temp_month_12",
+                "dist_to_urban_settlement",
+                "dist_to_rural_settlement",
+                "rainfall_avg_prev_1m",
+                "rainfall_avg_prev_3m",
+                "rainfall_avg_prev_6m",
+                "rainfall_avg_prev_12m",
+                "temp_avg_prev_1m",
+                "temp_avg_prev_3m",
+                "temp_avg_prev_6m",
+                "temp_avg_prev_12m",
             ];
 
             for col_name in expected_cols {
@@ -2201,6 +2522,7 @@ mod tests {
                 "rainfall",
                 "temperature",
                 "resident",
+                "settlement",
             ] {
                 std::fs::create_dir_all(resampled.join(sub)).unwrap();
             }
@@ -2233,7 +2555,7 @@ mod tests {
 
             // All other rasters at (2,2) — valid values.
             write_test_tif(
-                resampled.join("landuse/landuse.tif").to_str().unwrap(),
+                resampled.join("landuse/landuse_2018.tif").to_str().unwrap(),
                 5,
                 5,
                 2.0,
@@ -2269,10 +2591,31 @@ mod tests {
                 3000.0,
             );
             write_test_tif(
-                resampled.join("resident/resident.tif").to_str().unwrap(),
+                resampled
+                    .join("resident/resident_2018.tif")
+                    .to_str()
+                    .unwrap(),
                 5,
                 5,
                 50.0,
+            );
+            write_test_tif(
+                resampled
+                    .join("settlement/urban_settlement_dist_2018.tif")
+                    .to_str()
+                    .unwrap(),
+                5,
+                5,
+                4000.0,
+            );
+            write_test_tif(
+                resampled
+                    .join("settlement/rural_settlement_dist_2018.tif")
+                    .to_str()
+                    .unwrap(),
+                5,
+                5,
+                5000.0,
             );
 
             for m in 1..=12 {
@@ -2322,11 +2665,17 @@ mod tests {
                 "dist_to_road",
                 "dist_to_railway",
                 "dist_to_waterway",
+                "dist_to_urban_settlement",
+                "dist_to_rural_settlement",
                 "resident",
-                "rainfall_prev_1m",
-                "rainfall_prev_2m",
-                "rainfall_prev_3m",
-                "rainfall_prev_total_3m",
+                "rainfall_avg_prev_1m",
+                "rainfall_avg_prev_3m",
+                "rainfall_avg_prev_6m",
+                "rainfall_avg_prev_12m",
+                "temp_avg_prev_1m",
+                "temp_avg_prev_3m",
+                "temp_avg_prev_6m",
+                "temp_avg_prev_12m",
             ];
 
             for col_name in feature_cols {
@@ -2351,35 +2700,6 @@ mod tests {
                 .unwrap()
                 .get(0);
             assert!(lu.is_some(), "landuse should be Some");
-
-            // Monthly columns too.
-            for m in 1..=12 {
-                let col_name = format!("rainfall_month_{:02}", m);
-                let val = out_df
-                    .column(&col_name)
-                    .unwrap()
-                    .as_materialized_series()
-                    .f64()
-                    .unwrap()
-                    .get(0);
-                assert!(
-                    val.is_some() && val.unwrap().is_finite(),
-                    "{col_name} should be finite"
-                );
-
-                let tcol = format!("temp_month_{:02}", m);
-                let tval = out_df
-                    .column(&tcol)
-                    .unwrap()
-                    .as_materialized_series()
-                    .f64()
-                    .unwrap()
-                    .get(0);
-                assert!(
-                    tval.is_some() && tval.unwrap().is_finite(),
-                    "{tcol} should be finite"
-                );
-            }
 
             // Slope should be > 0 (we have a hill).
             let slope = out_df

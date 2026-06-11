@@ -18,15 +18,15 @@ The stages are integrated by `cli`, but the stage crates are kept independent.
 cargo build --workspace
 
 # Inspect the CLASS-based workflow plan
-cargo run -p cli -- plan-workflow --config configs/class_basin_workflow.json
+cargo run -p if-cli -- plan-workflow --config configs/class_basin_workflow.json
 
 # Run individual stages
-cargo run -p cli -- data-process --config configs/class_basin_workflow.json
-cargo run -p cli -- train-workflow --config configs/class_basin_workflow.json
-cargo run -p cli -- predict-workflow --config configs/class_basin_workflow.json
+cargo run -p if-cli -- data-process --config configs/class_basin_workflow.json
+cargo run -p if-cli -- train-workflow --config configs/class_basin_workflow.json
+cargo run -p if-cli -- predict-workflow --config configs/class_basin_workflow.json
 
 # Run the full workflow
-cargo run -p cli -- run-workflow --config configs/class_basin_workflow.json
+cargo run -p if-cli -- run-workflow --config configs/class_basin_workflow.json
 ```
 
 ## Command Reference
@@ -94,6 +94,15 @@ data-process train predict
 - Prediction products inherit the CLASS geotransform and CRS.
 - Full extent is processed in tiles, typically `1024x1024`, to control memory.
 
+## Data Units
+
+- Temperature source files `data/temperature/tmp_YYYY.nc` store values in
+  tenths of degrees Celsius (`0.1 deg C`). A raw value of `253` means
+  `25.3 deg C`.
+- Settlement rasters use categorical values `1=urban settlement` and
+  `2=rural settlement`; the workflow converts them into separate distance
+  factors. See `docs/settlement_distance_factors.md`.
+
 ## Missing Data
 
 The workflow is designed to keep prediction possible when covariates are missing.
@@ -111,8 +120,8 @@ cargo check --workspace
 cargo test -p data-process --lib
 cargo test -p train --lib
 cargo test -p predict --lib
-cargo test -p cli --bins
-cargo run -p cli -- plan-workflow --config configs/class_basin_workflow.json
+cargo test -p if-cli --bins
+cargo run -p if-cli -- plan-workflow --config configs/class_basin_workflow.json
 ```
 
 Some GDAL-backed tests skip themselves when command-line GDAL tools are not

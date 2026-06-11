@@ -22,14 +22,19 @@ use gdal_crate::raster::Buffer;
 use gdal_crate::vector::LayerAccess;
 use gdal_crate::Dataset;
 use geo::algorithm::{BoundingRect, ClosestPoint, HaversineDistance};
-use geo::geometry::{Coord, LineString, Point};
+use geo::geometry::{Coord, LineString, Point, Rect};
 use geo::EuclideanDistance;
+use rayon::prelude::*;
 use rstar::{PointDistance, RTree, RTreeObject, AABB};
 use std::convert::TryInto;
 
 use loaders::base::{LoaderError, LoaderResult};
 
+use crate::aoi_mask::AoiMask;
 use crate::class_grid::ClassGrid;
+use crate::raster_distance;
+
+const NETWORK_SOURCE_BUFFER_DEGREES: f64 = 1.0;
 
 // ── Indexed river segment ────────────────────────────────────────
 
@@ -105,6 +110,13 @@ fn haversine_to_segment_m(px: f64, py: f64, segment: &LineString<f64>) -> f64 {
 /// Open a river shapefile and build an R‑tree whose entries are
 /// individual 2‑point line segments.
 fn build_river_rtree(river_path: &str) -> LoaderResult<RTree<SegmentGeom>> {
+    build_river_rtree_in_bounds(river_path, None)
+}
+
+fn build_river_rtree_in_bounds(
+    river_path: &str,
+    bounds: Option<Rect<f64>>,
+) -> LoaderResult<RTree<SegmentGeom>> {
     let ds = Dataset::open(Path::new(river_path))
         .map_err(|e| LoaderError::Gdal(format!("open river shp: {e}")))?;
 
@@ -114,6 +126,14 @@ fn build_river_rtree(river_path: &str) -> LoaderResult<RTree<SegmentGeom>> {
         let mut layer = ds
             .layer(idx)
             .map_err(|e| LoaderError::Gdal(format!("layer {idx}: {e}")))?;
+        if let Some(bounds) = bounds {
+            layer.set_spatial_filter_rect(
+                bounds.min().x,
+                bounds.min().y,
+                bounds.max().x,
+                bounds.max().y,
+            );
+        }
 
         for feature in layer.features() {
             let ogr_geom = match feature.geometry() {
@@ -140,8 +160,8 @@ fn build_river_rtree(river_path: &str) -> LoaderResult<RTree<SegmentGeom>> {
         }
     }
 
-    log::info!(
-        "Loaded {} river segments from {}",
+    crate::status!(
+        "[river-distance] loaded {} river segments from {}",
         segments.len(),
         river_path
     );
@@ -223,20 +243,40 @@ fn line_string_to_segments(ls: &LineString<f64>, out: &mut Vec<SegmentGeom>) {
 /// search radius are set to NaN.
 pub fn compute_river_distance_raster(
     class_grid: &ClassGrid,
+    aoi_mask: &AoiMask,
     river_path: &str,
     output_path: &str,
 ) -> LoaderResult<()> {
-    let tree = build_river_rtree(river_path)?;
+    compute_river_distance_raster_with_workers(class_grid, aoi_mask, river_path, output_path, 1)
+}
+
+pub fn compute_river_distance_raster_with_workers(
+    class_grid: &ClassGrid,
+    aoi_mask: &AoiMask,
+    river_path: &str,
+    output_path: &str,
+    workers: usize,
+) -> LoaderResult<()> {
+    let workers = effective_workers(workers);
+    let tree = build_river_rtree_in_bounds(
+        river_path,
+        Some(expand_bounds(
+            class_grid_bounds(class_grid),
+            NETWORK_SOURCE_BUFFER_DEGREES,
+        )),
+    )?;
 
     let width = class_grid.width();
     let height = class_grid.height();
     let geo_transform = *class_grid.geo_transform();
     let crs_wkt = class_grid.crs().to_string();
 
-    log::info!(
-        "Computing river distance raster: {}x{} pixels",
+    crate::status!(
+        "[river-distance] start: {}x{} pixels, workers={} -> {}",
         width,
-        height
+        height,
+        workers,
+        output_path
     );
 
     // ── Create output GeoTIFF ─────────────────────────────────────
@@ -276,8 +316,16 @@ pub fn compute_river_distance_raster(
     let tiles_x = (width + TILE_SIZE - 1) / TILE_SIZE;
     let tiles_y = (height + TILE_SIZE - 1) / TILE_SIZE;
     let total_tiles = tiles_x * tiles_y;
+    let batch_size = workers.saturating_mul(2).max(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .map_err(|e| LoaderError::Gdal(format!("build river distance thread pool: {e}")))?;
 
     let mut completed: usize = 0;
+    let mut finite_pixels: usize = 0;
+    let mut tile_specs = Vec::with_capacity(total_tiles);
+    let mut candidate_tiles = 0usize;
 
     for ty in 0..tiles_y {
         let row_off = ty * TILE_SIZE;
@@ -286,18 +334,47 @@ pub fn compute_river_distance_raster(
         for tx in 0..tiles_x {
             let col_off = tx * TILE_SIZE;
             let tile_w = (width - col_off).min(TILE_SIZE);
+            let intersects_aoi_bounds =
+                aoi_mask.window_intersects_bounds(class_grid, row_off, col_off, tile_w, tile_h);
+            if intersects_aoi_bounds {
+                candidate_tiles += 1;
+            }
+            tile_specs.push((col_off, row_off, tile_w, tile_h, intersects_aoi_bounds));
+        }
+    }
+    crate::status!("[river-distance] AOI candidate tiles: {candidate_tiles}/{total_tiles}");
 
-            let mut tile_data = vec![0.0f32; tile_w * tile_h];
-            compute_tile(
-                &tree,
-                class_grid,
-                col_off,
-                row_off,
-                tile_w,
-                tile_h,
-                &mut tile_data,
-            );
+    for batch in tile_specs.chunks(batch_size) {
+        let computed_tiles: Vec<(usize, usize, usize, usize, Vec<f32>)> = pool.install(|| {
+            batch
+                .par_iter()
+                .map(
+                    |&(col_off, row_off, tile_w, tile_h, intersects_aoi_bounds)| {
+                        let mut tile_data = vec![f32::NAN; tile_w * tile_h];
+                        if intersects_aoi_bounds {
+                            let aoi_tile_mask =
+                                aoi_mask.tile_mask(class_grid, row_off, col_off, tile_w, tile_h);
+                            if aoi_tile_mask.iter().any(|inside| *inside) {
+                                compute_tile(
+                                    &tree,
+                                    class_grid,
+                                    col_off,
+                                    row_off,
+                                    tile_w,
+                                    tile_h,
+                                    &aoi_tile_mask,
+                                    &mut tile_data,
+                                );
+                            }
+                        }
+                        (col_off, row_off, tile_w, tile_h, tile_data)
+                    },
+                )
+                .collect()
+        });
 
+        for (col_off, row_off, tile_w, tile_h, tile_data) in computed_tiles {
+            finite_pixels += tile_data.iter().filter(|value| value.is_finite()).count();
             // Write tile into the output raster
             let mut buf = Buffer::new((tile_w, tile_h), tile_data);
             band.write(
@@ -309,8 +386,8 @@ pub fn compute_river_distance_raster(
 
             completed += 1;
             if completed % 10 == 0 || completed == total_tiles {
-                log::info!(
-                    "River distance: {completed}/{total_tiles} tiles ({:.1}%)",
+                crate::status!(
+                    "[river-distance] progress: {completed}/{total_tiles} tiles ({:.1}%)",
                     (completed as f64 / total_tiles as f64) * 100.0
                 );
             }
@@ -321,8 +398,86 @@ pub fn compute_river_distance_raster(
     drop(band);
     drop(ds);
 
-    log::info!("River distance raster written to {output_path}");
+    if finite_pixels == 0 {
+        return Err(LoaderError::NoValidData);
+    }
+
+    crate::status!("[river-distance] complete: {output_path}");
     Ok(())
+}
+
+pub fn compute_river_distance_raster_rasterized(
+    class_grid: &ClassGrid,
+    aoi_mask: &AoiMask,
+    aoi_path: &Path,
+    river_path: &str,
+    output_path: &str,
+) -> LoaderResult<()> {
+    let output = Path::new(output_path);
+    let work_root = output
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("_distance_work");
+    raster_distance::compute_vector_distance_raster(
+        class_grid,
+        aoi_mask,
+        aoi_path,
+        Path::new(river_path),
+        output,
+        &work_root,
+        "river_dist",
+    )
+}
+
+fn class_grid_bounds(class_grid: &ClassGrid) -> Rect<f64> {
+    let last_row = class_grid.height().saturating_sub(1);
+    let last_col = class_grid.width().saturating_sub(1);
+    let corners = [
+        class_grid.pixel_to_geo(0, 0),
+        class_grid.pixel_to_geo(0, last_col),
+        class_grid.pixel_to_geo(last_row, 0),
+        class_grid.pixel_to_geo(last_row, last_col),
+    ];
+    let min_x = corners
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::INFINITY, f64::min);
+    let max_x = corners
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_y = corners
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::INFINITY, f64::min);
+    let max_y = corners
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    Rect::new(Coord { x: min_x, y: min_y }, Coord { x: max_x, y: max_y })
+}
+
+fn expand_bounds(bounds: Rect<f64>, degrees: f64) -> Rect<f64> {
+    Rect::new(
+        Coord {
+            x: bounds.min().x - degrees,
+            y: bounds.min().y - degrees,
+        },
+        Coord {
+            x: bounds.max().x + degrees,
+            y: bounds.max().y + degrees,
+        },
+    )
+}
+
+fn effective_workers(configured_workers: usize) -> usize {
+    if configured_workers > 0 {
+        configured_workers
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    }
 }
 
 /// Compute river distances for a single tile.
@@ -336,12 +491,18 @@ fn compute_tile(
     row_off: usize,
     tile_w: usize,
     tile_h: usize,
+    aoi_tile_mask: &[bool],
     out: &mut [f32],
 ) {
     for r in 0..tile_h {
         for c in 0..tile_w {
-            let (lng, lat) = class_grid.pixel_to_geo(row_off + r, col_off + c);
             let idx = r * tile_w + c;
+            if !aoi_tile_mask[idx] {
+                out[idx] = f32::NAN;
+                continue;
+            }
+
+            let (lng, lat) = class_grid.pixel_to_geo(row_off + r, col_off + c);
 
             let candidates = tree.nearest_neighbor_iter(&[lng, lat]);
             let mut best_m = f64::INFINITY;
@@ -435,7 +596,11 @@ mod tests {
         let out_path = tmp.path().join("river_dist.tif");
         let out_str = out_path.to_str().unwrap();
 
-        compute_river_distance_raster(&class_grid, &shp_path, out_str).unwrap();
+        let aoi_mask = AoiMask::from_rect(geo::Rect::new(
+            geo::Coord { x: 100.0, y: 30.13 },
+            geo::Coord { x: 100.05, y: 30.2 },
+        ));
+        compute_river_distance_raster(&class_grid, &aoi_mask, &shp_path, out_str).unwrap();
 
         assert!(out_path.exists(), "Output raster must exist");
 
@@ -454,6 +619,18 @@ mod tests {
         assert!(
             finite_count > 0,
             "Expected some finite distance values, got none"
+        );
+        assert!(
+            arr.iter().any(|v| v.is_nan()),
+            "Expected AOI-external pixels to remain NaN"
+        );
+        assert!(
+            arr[0].is_finite(),
+            "Top-left pixel is inside the synthetic AOI and should be computed"
+        );
+        assert!(
+            arr[w * h - 1].is_nan(),
+            "Bottom-right pixel is outside the synthetic AOI and should be NaN"
         );
     }
 

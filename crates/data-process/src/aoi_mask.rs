@@ -18,6 +18,38 @@ pub struct AoiMask {
 }
 
 impl AoiMask {
+    pub fn from_grid_bounds(class_grid: &ClassGrid) -> Self {
+        let last_row = class_grid.height().saturating_sub(1);
+        let last_col = class_grid.width().saturating_sub(1);
+        let corners = [
+            class_grid.pixel_to_geo(0, 0),
+            class_grid.pixel_to_geo(0, last_col),
+            class_grid.pixel_to_geo(last_row, 0),
+            class_grid.pixel_to_geo(last_row, last_col),
+        ];
+        let min_x = corners
+            .iter()
+            .map(|(x, _)| *x)
+            .fold(f64::INFINITY, f64::min);
+        let max_x = corners
+            .iter()
+            .map(|(x, _)| *x)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let min_y = corners
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f64::INFINITY, f64::min);
+        let max_y = corners
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let bounds = Rect::new(Coord { x: min_x, y: min_y }, Coord { x: max_x, y: max_y });
+        Self {
+            geometries: vec![geo::Geometry::Rect(bounds)],
+            bounds,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn from_rect(bounds: Rect<f64>) -> Self {
         Self {
@@ -131,6 +163,42 @@ impl AoiMask {
             }
         }
         mask
+    }
+
+    pub fn window_intersects_bounds(
+        &self,
+        class_grid: &ClassGrid,
+        row_off: usize,
+        col_off: usize,
+        width: usize,
+        height: usize,
+    ) -> bool {
+        let row_last = row_off + height.saturating_sub(1);
+        let col_last = col_off + width.saturating_sub(1);
+        let corners = [
+            class_grid.pixel_to_geo(row_off, col_off),
+            class_grid.pixel_to_geo(row_off, col_last),
+            class_grid.pixel_to_geo(row_last, col_off),
+            class_grid.pixel_to_geo(row_last, col_last),
+        ];
+        let min_x = corners
+            .iter()
+            .map(|(x, _)| *x)
+            .fold(f64::INFINITY, f64::min);
+        let max_x = corners
+            .iter()
+            .map(|(x, _)| *x)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let min_y = corners
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f64::INFINITY, f64::min);
+        let max_y = corners
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let window_bounds = Rect::new(Coord { x: min_x, y: min_y }, Coord { x: max_x, y: max_y });
+        self.bounds.intersects(&window_bounds)
     }
 }
 

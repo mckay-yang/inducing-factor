@@ -83,9 +83,9 @@ Worker auto-selection:
 
 ```bash
 cargo build --release
-time cargo run -p cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
+time cargo run -p if-cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
 
-samply record cargo run -p cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
+samply record cargo run -p if-cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
 
-heaptrack cargo run -p cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
+heaptrack cargo run -p if-cli --release -- run-workflow --config configs/class_basin_workflow.json --skip-data-process
 ```

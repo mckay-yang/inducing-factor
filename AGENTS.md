@@ -36,10 +36,10 @@ python -m inducing_factor.cli pipeline --config configs/quick_multi.yaml
 - **DEM**: `data/dem/tibet_dem.tif`
 - **Land Use**: `data/landuse`
 - **Rainfall**: `data/rainfall` (monthly files `preYYYYMM.tif`)
-- **Resident**: `data/resident`
+- **Resident / Settlement**: `data/resident` (GeoTIFF years 2000/2005/2010/2015/2020; categorical values `1=urban settlement`, `2=rural settlement`)
 - **River**: `data/river` (use `As_15s_Chimaps.shp`)
 - **Road**: `data/road` (yearly files `osm_{year}_roads.shp`, `osm_{year}_railways.shp`, `osm_{year}_waterways.shp`)
-- **Temperature**: `data/temperature` (annual files `tmp_YYYY.nc`)
+- **Temperature**: `data/temperature` (annual files `tmp_YYYY.nc`; values are stored in 0.1 °C, so raw `253` means 25.3 °C)
 - **CCDC**: `data/ccdc_res` (annual files `YYYY.tif`)
 
 ## Data Architecture

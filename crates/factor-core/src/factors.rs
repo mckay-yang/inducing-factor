@@ -1,8 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use itertools::Itertools;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use rayon::prelude::*;
 
 use crate::stats::{benjamini_hochberg, relative_risk_ci, true_relative_risk};
 use crate::types::{FactorMiningConfig, InducingFactor};
@@ -36,16 +38,154 @@ impl FactorMiner {
     }
 
     pub fn count_patterns(&self, transactions: &[Vec<String>]) -> HashMap<Vec<String>, usize> {
-        let mut counts: HashMap<Vec<String>, usize> = HashMap::new();
-        for items in transactions {
-            let max_len = self.config.max_pattern_size.min(items.len());
-            for size in 1..=max_len {
-                for combo in items.iter().combinations(size) {
-                    let pattern: Vec<String> = combo.iter().map(|s| (*s).clone()).collect();
-                    *counts.entry(pattern).or_insert(0) += 1;
-                }
-            }
+        self.count_patterns_impl(transactions, "count_patterns", None)
+    }
+
+    fn count_patterns_impl(
+        &self,
+        transactions: &[Vec<String>],
+        label: &str,
+        progress: Option<&(dyn Fn(&str) + Sync)>,
+    ) -> HashMap<Vec<String>, usize> {
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .max(1);
+        if transactions.len() < workers * 512 {
+            progress_log(
+                progress,
+                format!(
+                    "[factor-mining] {label}: serial count start, transactions={}",
+                    transactions.len()
+                ),
+            );
+            let counts = self.count_patterns_serial(transactions);
+            progress_log(
+                progress,
+                format!(
+                    "[factor-mining] {label}: serial count complete, unique_patterns={}",
+                    counts.len()
+                ),
+            );
+            return counts;
         }
+
+        let chunk_size = (transactions.len() / (workers * 4)).max(512);
+        let total_chunks = transactions.len().div_ceil(chunk_size);
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] {label}: parallel count start, transactions={}, chunks={}, chunk_size={}, workers={workers}",
+                transactions.len(),
+                total_chunks,
+                chunk_size
+            ),
+        );
+        let completed_chunks = AtomicUsize::new(0);
+        let last_report_bucket = AtomicUsize::new(usize::MAX);
+        let counts = transactions
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let counts = self.count_patterns_serial(chunk);
+                let completed = completed_chunks.fetch_add(1, Ordering::Relaxed) + 1;
+                progress_percent(
+                    progress,
+                    label,
+                    "count chunks",
+                    completed,
+                    total_chunks,
+                    &last_report_bucket,
+                );
+                counts
+            })
+            .reduce(HashMap::new, merge_counts);
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] {label}: parallel count complete, unique_patterns={}",
+                counts.len()
+            ),
+        );
+        counts
+    }
+
+    fn count_patterns_serial(&self, transactions: &[Vec<String>]) -> HashMap<Vec<String>, usize> {
+        let mut counts = HashMap::new();
+        for items in transactions {
+            count_item_patterns(items, self.config.max_pattern_size, |pattern| {
+                *counts.entry(pattern).or_insert(0) += 1;
+            });
+        }
+        counts
+    }
+
+    fn count_patterns_filtered_impl(
+        &self,
+        transactions: &[Vec<String>],
+        allowed_patterns: &HashSet<Vec<String>>,
+        label: &str,
+        progress: Option<&(dyn Fn(&str) + Sync)>,
+    ) -> HashMap<Vec<String>, usize> {
+        if transactions.is_empty() || allowed_patterns.is_empty() {
+            progress_log(
+                progress,
+                format!(
+                    "[factor-mining] {label}: skip filtered count, transactions={}, allowed_patterns={}",
+                    transactions.len(),
+                    allowed_patterns.len()
+                ),
+            );
+            return HashMap::new();
+        }
+
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .max(1);
+        let chunk_size = (transactions.len() / (workers * 4)).max(512);
+        let total_chunks = transactions.len().div_ceil(chunk_size);
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] {label}: filtered count start, transactions={}, allowed_patterns={}, chunks={}, chunk_size={}, workers={workers}",
+                transactions.len(),
+                allowed_patterns.len(),
+                total_chunks,
+                chunk_size
+            ),
+        );
+        let completed_chunks = AtomicUsize::new(0);
+        let last_report_bucket = AtomicUsize::new(usize::MAX);
+        let counts = transactions
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut counts = HashMap::new();
+                for items in chunk {
+                    count_item_patterns(items, self.config.max_pattern_size, |pattern| {
+                        if allowed_patterns.contains(&pattern) {
+                            *counts.entry(pattern).or_insert(0) += 1;
+                        }
+                    });
+                }
+                let completed = completed_chunks.fetch_add(1, Ordering::Relaxed) + 1;
+                progress_percent(
+                    progress,
+                    label,
+                    "filtered count chunks",
+                    completed,
+                    total_chunks,
+                    &last_report_bucket,
+                );
+                counts
+            })
+            .reduce(HashMap::new, merge_counts);
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] {label}: filtered count complete, unique_patterns={}",
+                counts.len()
+            ),
+        );
         counts
     }
 
@@ -54,22 +194,105 @@ impl FactorMiner {
         event_transactions: &[Vec<String>],
         background_transactions: &[Vec<String>],
     ) -> HashMap<Vec<String>, PatternStats> {
+        self.mine_pattern_candidates_impl(event_transactions, background_transactions, None)
+    }
+
+    pub fn mine_pattern_candidates_with_progress(
+        &self,
+        event_transactions: &[Vec<String>],
+        background_transactions: &[Vec<String>],
+        progress: &(dyn Fn(&str) + Sync),
+    ) -> HashMap<Vec<String>, PatternStats> {
+        self.mine_pattern_candidates_impl(
+            event_transactions,
+            background_transactions,
+            Some(progress),
+        )
+    }
+
+    fn mine_pattern_candidates_impl(
+        &self,
+        event_transactions: &[Vec<String>],
+        background_transactions: &[Vec<String>],
+        progress: Option<&(dyn Fn(&str) + Sync)>,
+    ) -> HashMap<Vec<String>, PatternStats> {
         if event_transactions.is_empty() {
+            progress_log(
+                progress,
+                "[factor-mining] candidate mining skipped: no event transactions".to_string(),
+            );
             return HashMap::new();
         }
 
-        let event_counts = self.count_patterns(event_transactions);
-        let background_counts = self.count_patterns(background_transactions);
         let n_event = event_transactions.len();
         let n_bg = background_transactions.len().max(1);
 
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] candidate mining start: events={}, background={}, max_pattern_size={}, min_support={:.4}, min_rr={:.4}",
+                n_event,
+                background_transactions.len(),
+                self.config.max_pattern_size,
+                self.config.min_support,
+                self.config.min_relative_risk
+            ),
+        );
+
         let min_event_count = ((self.config.min_support * n_event as f64).ceil() as usize).max(1);
+        let event_counts =
+            self.count_patterns_impl(event_transactions, "event pattern count", progress);
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] candidate mining: event count complete, min_event_count={}, event_unique_patterns={}",
+                min_event_count,
+                event_counts.len()
+            ),
+        );
+        let allowed_patterns: HashSet<Vec<String>> = event_counts
+            .iter()
+            .filter_map(|(pattern, count)| {
+                if *count >= min_event_count {
+                    Some(pattern.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] candidate mining: support filter complete, allowed_patterns={}/{} ({:.1}%)",
+                allowed_patterns.len(),
+                event_counts.len(),
+                percent(allowed_patterns.len(), event_counts.len())
+            ),
+        );
+        let background_counts = self.count_patterns_filtered_impl(
+            background_transactions,
+            &allowed_patterns,
+            "background pattern count",
+            progress,
+        );
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] candidate mining: background count complete, matched_patterns={}",
+                background_counts.len()
+            ),
+        );
         let epsilon = 1e-6_f64;
 
         let mut candidates: HashMap<Vec<String>, PatternStats> = HashMap::new();
+        let total_patterns = event_counts.len();
+        let mut scanned = 0usize;
+        let mut last_bucket = usize::MAX;
 
         for (pattern, count_event) in &event_counts {
+            scanned += 1;
             if *count_event < min_event_count {
+                report_candidate_scan(progress, scanned, total_patterns, &mut last_bucket);
                 continue;
             }
             let count_bg = background_counts.get(pattern).copied().unwrap_or(0);
@@ -78,6 +301,7 @@ impl FactorMiner {
             let relative_risk = (support_event + epsilon) / (support_background + epsilon);
 
             if relative_risk < self.config.min_relative_risk {
+                report_candidate_scan(progress, scanned, total_patterns, &mut last_bucket);
                 continue;
             }
 
@@ -113,7 +337,16 @@ impl FactorMiner {
                     stability: 0.0,
                 },
             );
+            report_candidate_scan(progress, scanned, total_patterns, &mut last_bucket);
         }
+
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] candidate mining complete: candidates={}",
+                candidates.len()
+            ),
+        );
 
         candidates
     }
@@ -123,16 +356,54 @@ impl FactorMiner {
         event_transactions: &[Vec<String>],
         background_transactions: &[Vec<String>],
     ) -> HashMap<Vec<String>, f64> {
+        self.estimate_pattern_stability_impl(event_transactions, background_transactions, None)
+    }
+
+    pub fn estimate_pattern_stability_with_progress(
+        &self,
+        event_transactions: &[Vec<String>],
+        background_transactions: &[Vec<String>],
+        progress: &(dyn Fn(&str) + Sync),
+    ) -> HashMap<Vec<String>, f64> {
+        self.estimate_pattern_stability_impl(
+            event_transactions,
+            background_transactions,
+            Some(progress),
+        )
+    }
+
+    fn estimate_pattern_stability_impl(
+        &self,
+        event_transactions: &[Vec<String>],
+        background_transactions: &[Vec<String>],
+        progress: Option<&(dyn Fn(&str) + Sync)>,
+    ) -> HashMap<Vec<String>, f64> {
         if event_transactions.is_empty() {
+            progress_log(
+                progress,
+                "[factor-mining] bootstrap stability skipped: no event transactions".to_string(),
+            );
             return HashMap::new();
         }
+
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] bootstrap stability start: iterations={}, max_samples={}, events={}, background={}",
+                self.config.bootstrap_iterations,
+                self.config.max_bootstrap_samples,
+                event_transactions.len(),
+                background_transactions.len()
+            ),
+        );
 
         let mut rng = StdRng::seed_from_u64(self.config.random_state);
         let mut stability_counter: HashMap<Vec<String>, usize> = HashMap::new();
         let n_event = event_transactions.len();
         let n_bg = background_transactions.len();
 
-        for _ in 0..self.config.bootstrap_iterations {
+        let mut last_bucket = usize::MAX;
+        for iter_idx in 0..self.config.bootstrap_iterations {
             let event_size = self.config.max_bootstrap_samples.min(n_event);
             let bg_size = self.config.max_bootstrap_samples.min(n_bg);
 
@@ -154,10 +425,28 @@ impl FactorMiner {
                 vec![]
             };
 
-            let mined = self.mine_pattern_candidates(&event_sample, &bg_sample);
+            progress_log(
+                progress,
+                format!(
+                    "[factor-mining] bootstrap iteration {}/{} start ({:.1}%): event_sample={}, background_sample={}",
+                    iter_idx + 1,
+                    self.config.bootstrap_iterations,
+                    percent(iter_idx, self.config.bootstrap_iterations),
+                    event_sample.len(),
+                    bg_sample.len()
+                ),
+            );
+
+            let mined = self.mine_pattern_candidates_impl(&event_sample, &bg_sample, None);
             for pattern in mined.keys() {
                 *stability_counter.entry(pattern.clone()).or_insert(0) += 1;
             }
+            report_bootstrap_progress(
+                progress,
+                iter_idx + 1,
+                self.config.bootstrap_iterations,
+                &mut last_bucket,
+            );
         }
 
         let mut stability: HashMap<Vec<String>, f64> = HashMap::new();
@@ -165,6 +454,13 @@ impl FactorMiner {
         for (pattern, count) in stability_counter {
             stability.insert(pattern, count as f64 / div);
         }
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] bootstrap stability complete: stable_pattern_keys={}",
+                stability.len()
+            ),
+        );
         stability
     }
 
@@ -304,6 +600,160 @@ impl FactorMiner {
         }
 
         library
+    }
+}
+
+fn progress_log(progress: Option<&(dyn Fn(&str) + Sync)>, message: String) {
+    if let Some(progress) = progress {
+        progress(&message);
+    }
+}
+
+fn progress_percent(
+    progress: Option<&(dyn Fn(&str) + Sync)>,
+    label: &str,
+    item_label: &str,
+    completed: usize,
+    total: usize,
+    last_report_bucket: &AtomicUsize,
+) {
+    if progress.is_none() || total == 0 {
+        return;
+    }
+    let bucket = progress_bucket(completed, total);
+    loop {
+        let last = last_report_bucket.load(Ordering::Relaxed);
+        let should_report = last == usize::MAX || completed == total || bucket > last;
+        if !should_report {
+            return;
+        }
+        if last_report_bucket
+            .compare_exchange(last, bucket, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            progress_log(
+                progress,
+                format!(
+                    "[factor-mining] {label}: {item_label} {completed}/{total} ({:.1}%)",
+                    percent(completed, total)
+                ),
+            );
+            return;
+        }
+    }
+}
+
+fn report_candidate_scan(
+    progress: Option<&(dyn Fn(&str) + Sync)>,
+    scanned: usize,
+    total: usize,
+    last_report_bucket: &mut usize,
+) {
+    if progress.is_none() || total == 0 {
+        return;
+    }
+    let bucket = progress_bucket(scanned, total);
+    if *last_report_bucket == usize::MAX || scanned == total || bucket > *last_report_bucket {
+        *last_report_bucket = bucket;
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] candidate mining: scoring progress {scanned}/{total} ({:.1}%)",
+                percent(scanned, total)
+            ),
+        );
+    }
+}
+
+fn report_bootstrap_progress(
+    progress: Option<&(dyn Fn(&str) + Sync)>,
+    completed: usize,
+    total: usize,
+    last_report_bucket: &mut usize,
+) {
+    if progress.is_none() || total == 0 {
+        return;
+    }
+    let bucket = progress_bucket(completed, total);
+    if *last_report_bucket == usize::MAX || completed == total || bucket > *last_report_bucket {
+        *last_report_bucket = bucket;
+        progress_log(
+            progress,
+            format!(
+                "[factor-mining] bootstrap stability progress {completed}/{total} ({:.1}%)",
+                percent(completed, total)
+            ),
+        );
+    }
+}
+
+fn progress_bucket(completed: usize, total: usize) -> usize {
+    if total == 0 {
+        20
+    } else if completed >= total {
+        20
+    } else {
+        (completed.saturating_mul(20)) / total
+    }
+}
+
+fn percent(completed: usize, total: usize) -> f64 {
+    if total == 0 {
+        100.0
+    } else {
+        100.0 * completed as f64 / total as f64
+    }
+}
+
+fn merge_counts(
+    mut left: HashMap<Vec<String>, usize>,
+    right: HashMap<Vec<String>, usize>,
+) -> HashMap<Vec<String>, usize> {
+    if left.len() < right.len() {
+        return merge_counts(right, left);
+    }
+    for (pattern, count) in right {
+        *left.entry(pattern).or_insert(0) += count;
+    }
+    left
+}
+
+fn count_item_patterns<F>(items: &[String], max_pattern_size: usize, mut visit: F)
+where
+    F: FnMut(Vec<String>),
+{
+    let max_len = max_pattern_size.min(items.len());
+    if max_len == 0 {
+        return;
+    }
+
+    if max_len >= 1 {
+        for item in items {
+            visit(vec![item.clone()]);
+        }
+    }
+    if max_len >= 2 {
+        for i in 0..items.len() {
+            for j in i + 1..items.len() {
+                visit(vec![items[i].clone(), items[j].clone()]);
+            }
+        }
+    }
+    if max_len >= 3 {
+        for i in 0..items.len() {
+            for j in i + 1..items.len() {
+                for k in j + 1..items.len() {
+                    visit(vec![items[i].clone(), items[j].clone(), items[k].clone()]);
+                }
+            }
+        }
+    }
+    if max_len > 3 {
+        for size in 4..=max_len {
+            for combo in items.iter().combinations(size) {
+                visit(combo.iter().map(|s| (*s).clone()).collect());
+            }
+        }
     }
 }
 

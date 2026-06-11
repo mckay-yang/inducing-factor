@@ -13,6 +13,28 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+macro_rules! status {
+    ($($arg:tt)*) => {{
+        log_status(&format!($($arg)*));
+    }};
+}
+
+fn log_status(message: &str) {
+    eprintln!("[{}] {}", timestamp(), message);
+}
+
+fn timestamp() -> String {
+    Command::new("date")
+        .arg("+%Y-%m-%d %H:%M:%S")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown-time".to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -85,6 +107,13 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
     let model = BasinModelArtifact::read_json(&request.model_path)?;
     let class_grid = GeoGrid::open(&request.class_raster, request.class_start_year)
         .map_err(|e| PredictError::Gdal(e.to_string()))?;
+    status!(
+        "[predict] start: model={}, feature_dir={}, output_dir={}, year={}",
+        request.model_path.display(),
+        request.feature_dir.display(),
+        request.output_dir.display(),
+        request.prediction_year
+    );
 
     let mut tile_paths: Vec<PathBuf> = fs::read_dir(&request.feature_dir)?
         .filter_map(|entry| {
@@ -100,6 +129,7 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
     if tile_paths.is_empty() {
         return Err(PredictError::NoTiles(request.feature_dir.clone()));
     }
+    status!("[predict] feature tiles discovered: {}", tile_paths.len());
 
     let wants_probability =
         request.products.contains(&PredictionProduct::Probability) || request.products.is_empty();
@@ -149,6 +179,39 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
             .output_dir
             .join(format!("missing_data_mask_{}.tif", request.prediction_year))
     });
+    let requested_outputs = requested_output_paths(
+        probability_path.as_ref(),
+        dominant_factor_path.as_ref(),
+        disturbance_type_path.as_ref(),
+        &disturbance_type_probability_paths,
+        missing_data_mask_path.as_ref(),
+    );
+    let workers = effective_workers(request.workers);
+    if !requested_outputs.is_empty() && requested_outputs.iter().all(|path| file_is_nonempty(path))
+    {
+        status!(
+            "[predict] all requested outputs exist, skip: {} files",
+            requested_outputs.len()
+        );
+        return Ok(BasinPredictReport {
+            probability_path,
+            dominant_factor_path,
+            disturbance_type_path,
+            disturbance_type_probability_paths,
+            missing_data_mask_path,
+            tiles_processed: 0,
+            pixels_processed: 0,
+            workers,
+        });
+    }
+    status!(
+        "[predict] products: probability={}, dominant_factor={}, disturbance_type={}, type_probability={}, missing_mask={}",
+        wants_probability,
+        wants_dominant,
+        wants_disturbance_type,
+        wants_type_probability,
+        wants_missing
+    );
 
     let mut probability_ds = match &probability_path {
         Some(path) => Some(create_tiff::<f32>(path, &class_grid, Some(f64::NAN))?),
@@ -197,15 +260,21 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
 
     let mut tiles_processed = 0usize;
     let mut pixels_processed = 0usize;
-    let workers = effective_workers(request.workers);
     let batch_size = workers.saturating_mul(2).max(1);
+    let total_batches = (tile_paths.len() + batch_size - 1) / batch_size;
+    status!(
+        "[predict] processing tiles: workers={}, batch_size={}, batches={}",
+        workers,
+        batch_size,
+        total_batches
+    );
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()
         .map_err(|e| PredictError::ThreadPool(e.to_string()))?;
 
-    for batch in tile_paths.chunks(batch_size) {
+    for (batch_idx, batch) in tile_paths.chunks(batch_size).enumerate() {
         let batch_tiles: Vec<Result<Option<TilePredictions>, PredictError>> = pool.install(|| {
             batch
                 .par_iter()
@@ -237,6 +306,20 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
 
             tiles_processed += 1;
         }
+        if tiles_processed == 1 || (batch_idx + 1) % 10 == 0 || batch_idx + 1 == total_batches {
+            status!(
+                "[predict] progress: batch {}/{} ({:.1}%), tiles={}, pixels={}",
+                batch_idx + 1,
+                total_batches,
+                if total_batches > 0 {
+                    100.0 * (batch_idx + 1) as f64 / total_batches as f64
+                } else {
+                    100.0
+                },
+                tiles_processed,
+                pixels_processed
+            );
+        }
     }
 
     drop(probability_ds);
@@ -244,6 +327,13 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
     drop(disturbance_type_ds);
     drop(disturbance_type_probability_ds);
     drop(missing_ds);
+
+    status!(
+        "[predict] complete: tiles={}, pixels={}, output_dir={}",
+        tiles_processed,
+        pixels_processed,
+        request.output_dir.display()
+    );
 
     Ok(BasinPredictReport {
         probability_path,
@@ -255,6 +345,36 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
         pixels_processed,
         workers,
     })
+}
+
+fn requested_output_paths<'a>(
+    probability_path: Option<&'a PathBuf>,
+    dominant_factor_path: Option<&'a PathBuf>,
+    disturbance_type_path: Option<&'a PathBuf>,
+    disturbance_type_probability_paths: &'a [PathBuf],
+    missing_data_mask_path: Option<&'a PathBuf>,
+) -> Vec<&'a PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = probability_path {
+        paths.push(path);
+    }
+    if let Some(path) = dominant_factor_path {
+        paths.push(path);
+    }
+    if let Some(path) = disturbance_type_path {
+        paths.push(path);
+    }
+    paths.extend(disturbance_type_probability_paths.iter());
+    if let Some(path) = missing_data_mask_path {
+        paths.push(path);
+    }
+    paths
+}
+
+fn file_is_nonempty(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
 }
 
 fn process_tile_path(
@@ -350,13 +470,6 @@ fn prepare_tile_predictions(
         missing_by_row.push(missing);
     }
 
-    let labels = model
-        .discretizer
-        .transform(pred_feature_cols, &feature_data, true);
-    let label_matrix = LabelMatrix::from_labels(pred_feature_cols, &labels);
-    let compiled_factors =
-        CompiledFactors::compile(pred_feature_cols, &label_matrix, &model.selected_factors);
-
     let mut probability_tile = vec![f32::NAN; n_cells];
     let mut dominant_tile = vec![0i16; n_cells];
     let mut disturbance_type_tile = vec![0i16; n_cells];
@@ -364,28 +477,51 @@ fn prepare_tile_predictions(
         std::array::from_fn(|_| vec![f32::NAN; n_cells]);
     let mut missing_tile = vec![255u8; n_cells];
 
-    for i in 0..df.height() {
-        let local_row = rows[i] - row_off;
-        let local_col = cols[i] - col_off;
-        let idx = local_row * width + local_col;
-        let activations = compiled_factors.activations_for_row(&label_matrix, i);
-        probability_tile[idx] = occurrence_probability(
-            &activations,
-            &model.occurrence_engine.weights,
-            model.occurrence_engine.intercept,
-        ) as f32;
-        dominant_tile[idx] = dominant_factor_index_from_activations(
-            &activations,
-            &model.occurrence_engine.weights,
-            &model.selected_factors,
-        );
-        let (class_value, class_probabilities) =
-            disturbance_type_prediction_from_activations(&activations, model);
-        disturbance_type_tile[idx] = class_value;
-        for class_idx in 0..4 {
-            disturbance_type_probability_tiles[class_idx][idx] = class_probabilities[class_idx];
+    if model.occurrence_engine.is_numeric_backend() {
+        let probabilities = model.occurrence_engine.predict_numeric_rows(&feature_data);
+        for i in 0..df.height() {
+            let local_row = rows[i] - row_off;
+            let local_col = cols[i] - col_off;
+            let idx = local_row * width + local_col;
+            probability_tile[idx] = probabilities.get(i).copied().unwrap_or(f64::NAN) as f32;
+            dominant_tile[idx] = 0;
+            disturbance_type_tile[idx] = 0;
+            for class_idx in 0..4 {
+                disturbance_type_probability_tiles[class_idx][idx] = f32::NAN;
+            }
+            missing_tile[idx] = if missing_by_row[i] { 1 } else { 0 };
         }
-        missing_tile[idx] = if missing_by_row[i] { 1 } else { 0 };
+    } else {
+        let labels = model
+            .discretizer
+            .transform(pred_feature_cols, &feature_data, true);
+        let label_matrix = LabelMatrix::from_labels(pred_feature_cols, &labels);
+        let compiled_factors =
+            CompiledFactors::compile(pred_feature_cols, &label_matrix, &model.selected_factors);
+
+        for i in 0..df.height() {
+            let local_row = rows[i] - row_off;
+            let local_col = cols[i] - col_off;
+            let idx = local_row * width + local_col;
+            let activations = compiled_factors.activations_for_row(&label_matrix, i);
+            probability_tile[idx] = occurrence_probability(
+                &activations,
+                &model.occurrence_engine.weights,
+                model.occurrence_engine.intercept,
+            ) as f32;
+            dominant_tile[idx] = dominant_factor_index_from_activations(
+                &activations,
+                &model.occurrence_engine.weights,
+                &model.selected_factors,
+            );
+            let (class_value, class_probabilities) =
+                disturbance_type_prediction_from_activations(&activations, model);
+            disturbance_type_tile[idx] = class_value;
+            for class_idx in 0..4 {
+                disturbance_type_probability_tiles[class_idx][idx] = class_probabilities[class_idx];
+            }
+            missing_tile[idx] = if missing_by_row[i] { 1 } else { 0 };
+        }
     }
 
     Ok(TilePredictions {

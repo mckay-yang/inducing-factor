@@ -7,13 +7,15 @@
 pub mod aoi_mask;
 pub mod class_grid;
 pub mod feature_extraction;
+pub mod logging;
+pub mod raster_distance;
 pub mod resample;
 pub mod river_distance;
 pub mod road_distance;
 pub mod training_points;
 
 use gdal::{GeoGrid, GridWindow};
-use loaders::base::LoaderResult;
+use loaders::base::{LoaderError, LoaderResult};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -118,6 +120,13 @@ pub struct DataProcessRunReport {
 pub fn run_class_basin_data_process(
     request: &DataProcessRequest,
 ) -> LoaderResult<DataProcessRunReport> {
+    crate::status!(
+        "[data-process] start: cache={}, workers={}, tile_size={}, prediction_year={}",
+        request.cache_dir.display(),
+        request.workers,
+        request.tile_size,
+        request.prediction_year
+    );
     let class_path = path_to_string(&request.class_raster);
     let class_grid = class_grid::ClassGrid::open(&class_path, request.class_start_year)?;
     let aoi_mask = aoi_mask::AoiMask::load(&request.sources.aoi_shapefile, &class_grid)?;
@@ -133,6 +142,7 @@ pub fn run_class_basin_data_process(
         resampled_dir.join("road"),
         resampled_dir.join("river"),
         resampled_dir.join("resident"),
+        resampled_dir.join("settlement"),
         features_dir.clone(),
     ] {
         std::fs::create_dir_all(dir)?;
@@ -140,15 +150,22 @@ pub fn run_class_basin_data_process(
 
     let dem_out = resampled_dir.join("dem.tif");
     if request.source_usage.dem && !dem_out.exists() {
+        crate::status!("[data-process] DEM resample -> {}", dem_out.display());
         resample::resample_dem_to_class(
             &class_grid,
             &path_to_string(&request.sources.dem_raster),
             &path_to_string(&dem_out),
         )?;
+    } else if request.source_usage.dem {
+        crate::status!("[data-process] DEM exists, skip: {}", dem_out.display());
     }
 
     let ccdc_out = resampled_dir.join("ccdc");
     if request.source_usage.ccdc {
+        crate::status!(
+            "[data-process] CCDC resample/check -> {}",
+            ccdc_out.display()
+        );
         let _ = resample::resample_ccdc_to_class_with_workers(
             &class_grid,
             &path_to_string(&request.sources.ccdc_dir),
@@ -162,6 +179,11 @@ pub fn run_class_basin_data_process(
 
     let rainfall_out = resampled_dir.join("rainfall");
     if request.source_usage.rainfall {
+        crate::status!(
+            "[data-process] rainfall resample/check years {:?} -> {}",
+            year_range,
+            rainfall_out.display()
+        );
         let _ = resample::resample_rainfall_to_class_for_years_with_workers(
             &class_grid,
             &path_to_string(&request.sources.rainfall_dir),
@@ -174,6 +196,11 @@ pub fn run_class_basin_data_process(
 
     let temperature_out = resampled_dir.join("temperature");
     if request.source_usage.temperature {
+        crate::status!(
+            "[data-process] temperature resample/check years {:?} -> {}",
+            year_range,
+            temperature_out.display()
+        );
         let _ = resample::resample_temperature_to_class_for_years_with_workers(
             &class_grid,
             &path_to_string(&request.sources.temperature_dir),
@@ -184,37 +211,149 @@ pub fn run_class_basin_data_process(
         )?;
     }
 
-    let landuse_out = resampled_dir.join("landuse/landuse.tif");
-    if request.source_usage.landuse && !landuse_out.exists() {
-        resample::resample_landuse_to_class(
-            &class_grid,
-            &path_to_string(&request.sources.landuse_dir),
-            &path_to_string(&landuse_out),
-        )?;
+    if request.source_usage.landuse {
+        let available_landuse_years = discover_landuse_years(&request.sources.landuse_dir)?;
+        crate::status!(
+            "[data-process] landuse available years: {:?}",
+            available_landuse_years
+        );
+        let max_processing_year = processing_years.iter().copied().max().unwrap_or(i32::MAX);
+        for &year in &available_landuse_years {
+            if year > max_processing_year {
+                continue;
+            }
+            let landuse_out = resampled_dir.join(format!("landuse/landuse_{}.tif", year));
+            if landuse_out.exists() {
+                crate::status!(
+                    "[data-process] landuse {} exists, skip: {}",
+                    year,
+                    landuse_out.display()
+                );
+                continue;
+            }
+            crate::status!(
+                "[data-process] landuse {} resample -> {}",
+                year,
+                landuse_out.display()
+            );
+            resample::resample_landuse_to_class_for_year(
+                &class_grid,
+                &path_to_string(&request.sources.landuse_dir),
+                &path_to_string(&landuse_out),
+                year,
+            )?;
+        }
     }
 
-    let resident_out = resampled_dir.join("resident/resident.tif");
-    if request.source_usage.resident && !resident_out.exists() {
-        resample::resample_resident_to_class(
-            &class_grid,
-            &path_to_string(&request.sources.resident_raster),
-            &path_to_string(&resident_out),
-        )?;
+    if request.source_usage.resident {
+        let resident_dir = request
+            .sources
+            .resident_raster
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let available_resident = discover_resident_rasters(resident_dir)?;
+        crate::status!(
+            "[data-process] resident available years: {:?}",
+            available_resident
+                .iter()
+                .map(|(year, _)| *year)
+                .collect::<Vec<_>>()
+        );
+        let max_processing_year = processing_years.iter().copied().max().unwrap_or(i32::MAX);
+        for (year, src_path) in &available_resident {
+            let year = *year;
+            if year > max_processing_year {
+                continue;
+            }
+            let resident_out = resampled_dir.join(format!("resident/resident_{}.tif", year));
+            if resident_out.exists() {
+                crate::status!(
+                    "[data-process] resident {} exists, skip: {}",
+                    year,
+                    resident_out.display()
+                );
+                continue;
+            }
+            crate::status!(
+                "[data-process] resident {} resample -> {}",
+                year,
+                resident_out.display()
+            );
+            resample::resample_resident_to_class(
+                &class_grid,
+                &path_to_string(src_path),
+                &path_to_string(&resident_out),
+            )?;
+        }
+        for (year, src_path) in &available_resident {
+            let year = *year;
+            if year > max_processing_year {
+                continue;
+            }
+            for (target_value, prefix, label) in [
+                (1u8, "urban_settlement_dist", "urban_settlement"),
+                (2u8, "rural_settlement_dist", "rural_settlement"),
+            ] {
+                let out = resampled_dir.join(format!("settlement/{}_{}.tif", prefix, year));
+                if out.exists() {
+                    crate::status!(
+                        "[data-process] {} {} exists, skip: {}",
+                        label,
+                        year,
+                        out.display()
+                    );
+                    continue;
+                }
+                crate::status!(
+                    "[data-process] {} {} distance -> {}",
+                    label,
+                    year,
+                    out.display()
+                );
+                raster_distance::compute_raster_value_distance_raster(
+                    &class_grid,
+                    &aoi_mask,
+                    &request.sources.aoi_shapefile,
+                    src_path,
+                    target_value,
+                    &out,
+                    &resampled_dir.join("settlement/_distance_work"),
+                    &format!("{}_{}", label, year),
+                )?;
+            }
+        }
     }
 
     let river_out = resampled_dir.join("river/river_dist.tif");
     if request.source_usage.river && !river_out.exists() {
-        river_distance::compute_river_distance_raster(
+        crate::status!(
+            "[data-process] river distance AOI-masked precompute -> {}",
+            river_out.display()
+        );
+        river_distance::compute_river_distance_raster_rasterized(
             &class_grid,
+            &aoi_mask,
+            &request.sources.aoi_shapefile,
             &path_to_string(&request.sources.river_shapefile),
             &path_to_string(&river_out),
         )?;
+    } else if request.source_usage.river {
+        crate::status!(
+            "[data-process] river distance exists, skip: {}",
+            river_out.display()
+        );
     }
 
     let road_out = resampled_dir.join("road");
     if request.source_usage.road {
-        let _ = road_distance::compute_road_distance_rasters(
+        crate::status!(
+            "[data-process] road/railway/waterway distance AOI-masked precompute/check -> {}",
+            road_out.display()
+        );
+        let _ = road_distance::compute_road_distance_rasters_rasterized(
             &class_grid,
+            &aoi_mask,
+            &request.sources.aoi_shapefile,
             &path_to_string(&request.sources.road_dir),
             &path_to_string(&road_out),
         )?;
@@ -222,6 +361,11 @@ pub fn run_class_basin_data_process(
 
     let training_points_path = features_dir.join("training_points.parquet");
     if request.source_usage.ccdc && !training_points_path.exists() {
+        crate::status!(
+            "[data-process] training point generation years {:?} -> {}",
+            request.training_years,
+            training_points_path.display()
+        );
         let mut df = training_points::generate_training_points_for_years(
             &class_path,
             &path_to_string(&ccdc_out),
@@ -230,18 +374,36 @@ pub fn run_class_basin_data_process(
             &request.training_years,
         )?;
         training_points::write_training_points(&mut df, &path_to_string(&training_points_path))?;
+    } else if training_points_path.exists() {
+        crate::status!(
+            "[data-process] training points exist, skip: {}",
+            training_points_path.display()
+        );
     }
 
     let training_features_path = features_dir.join("training_features.parquet");
     if training_points_path.exists() && !training_features_path.exists() {
+        crate::status!(
+            "[data-process] training feature extraction -> {}",
+            training_features_path.display()
+        );
         feature_extraction::extract_training_features_with_workers(
             &path_to_string(&training_points_path),
             &path_to_string(&training_features_path),
             request.workers,
         )?;
+    } else if training_features_path.exists() {
+        crate::status!(
+            "[data-process] training features exist, skip: {}",
+            training_features_path.display()
+        );
     }
 
     let prediction_dir = features_dir.join(format!("prediction_{}", request.prediction_year));
+    crate::status!(
+        "[data-process] prediction feature extraction -> {}",
+        prediction_dir.display()
+    );
     let prediction_tiles = feature_extraction::extract_prediction_features_with_workers(
         &class_grid,
         &aoi_mask,
@@ -251,6 +413,12 @@ pub fn run_class_basin_data_process(
         request.prediction_year,
         request.workers,
     )?;
+
+    crate::status!(
+        "[data-process] complete: prediction_tiles={}, cache={}",
+        prediction_tiles,
+        cache_dir.display()
+    );
 
     Ok(DataProcessRunReport {
         class_width: class_grid.width(),
@@ -271,6 +439,61 @@ fn min_max_year(years: &[i32]) -> Option<(i32, i32)> {
     let min_year = years.iter().min().copied()?;
     let max_year = years.iter().max().copied()?;
     Some((min_year, max_year))
+}
+
+fn discover_landuse_years(landuse_dir: &Path) -> LoaderResult<Vec<i32>> {
+    let mut years = std::collections::BTreeSet::new();
+    collect_landuse_years_recursive(landuse_dir, &mut years)?;
+    Ok(years.into_iter().collect())
+}
+
+fn collect_landuse_years_recursive(
+    dir: &Path,
+    years: &mut std::collections::BTreeSet<i32>,
+) -> LoaderResult<()> {
+    for entry in std::fs::read_dir(dir).map_err(LoaderError::Io)? {
+        let entry = entry.map_err(LoaderError::Io)?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_landuse_years_recursive(&path, years)?;
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Some(year) = parse_year_after_token(name, "CLCD_v01_") {
+            years.insert(year);
+        }
+    }
+    Ok(())
+}
+
+fn discover_resident_rasters(resident_dir: &Path) -> LoaderResult<Vec<(i32, PathBuf)>> {
+    let mut rasters = Vec::new();
+    for entry in std::fs::read_dir(resident_dir).map_err(LoaderError::Io)? {
+        let entry = entry.map_err(LoaderError::Io)?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("GURS_") || !name.ends_with(".tif") {
+            continue;
+        }
+        if let Some(year) = parse_year_after_token(name, "GURS_") {
+            rasters.push((year, path));
+        }
+    }
+    rasters.sort_by_key(|(year, _)| *year);
+    Ok(rasters)
+}
+
+fn parse_year_after_token(name: &str, token: &str) -> Option<i32> {
+    let start = name.find(token)? + token.len();
+    let year = name.get(start..start + 4)?;
+    year.parse().ok()
 }
 
 #[cfg(test)]

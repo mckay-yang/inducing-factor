@@ -815,16 +815,38 @@ pub fn resample_landuse_to_class(
     landuse_dir: &str,
     output_path: &str,
 ) -> LoaderResult<()> {
+    let tif_files = collect_files_recursive(Path::new(landuse_dir), ".tif")?;
+    resample_landuse_files_to_class(class_grid, &tif_files, output_path)
+}
+
+pub fn resample_landuse_to_class_for_year(
+    class_grid: &ClassGrid,
+    landuse_dir: &str,
+    output_path: &str,
+    year: i32,
+) -> LoaderResult<()> {
+    let year_token = format!("CLCD_v01_{}_", year);
+    let tif_files: Vec<String> = collect_files_recursive(Path::new(landuse_dir), ".tif")?
+        .into_iter()
+        .filter(|path| path.contains(&year_token))
+        .collect();
+    resample_landuse_files_to_class(class_grid, &tif_files, output_path)
+}
+
+fn resample_landuse_files_to_class(
+    class_grid: &ClassGrid,
+    tif_files: &[String],
+    output_path: &str,
+) -> LoaderResult<()> {
     let gdalbuildvrt = find_gdalbuildvrt()
         .ok_or_else(|| LoaderError::Gdal("gdalbuildvrt not found in PATH or GDAL_HOME".into()))?;
     let gdalwarp = find_gdalwarp()
         .ok_or_else(|| LoaderError::Gdal("gdalwarp not found in PATH or GDAL_HOME".into()))?;
 
-    // Discover all provincial tif files recursively.
-    let tif_files = collect_files_recursive(Path::new(landuse_dir), ".tif")?;
     if tif_files.is_empty() {
         return Err(LoaderError::FileNotFound(format!(
-            "no .tif files found under {landuse_dir}"
+            "no landuse .tif files found for {}",
+            output_path
         )));
     }
     log::info!("found {} landuse tiles to mosaic", tif_files.len());

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::stats::entropy;
@@ -26,12 +27,15 @@ impl AdaptiveDiscretizer {
         self.features = feature_names.to_vec();
         self.feature_meta.clear();
 
-        for fi in 0..n_features {
-            let name = &feature_names[fi];
-            let col: Vec<f64> = data.iter().map(|row| row[fi]).collect();
-            let meta = self.fit_feature(name, &col, y);
-            self.feature_meta.insert(name.clone(), meta);
-        }
+        self.feature_meta = (0..n_features)
+            .into_par_iter()
+            .map(|fi| {
+                let name = &feature_names[fi];
+                let col: Vec<f64> = data.iter().map(|row| row[fi]).collect();
+                let meta = self.fit_feature(name, &col, y);
+                (name.clone(), meta)
+            })
+            .collect();
     }
 
     fn fit_feature(&self, name: &str, series: &[f64], y: &[f64]) -> FeatureMeta {
@@ -88,7 +92,11 @@ impl AdaptiveDiscretizer {
         }
         .max(2);
 
-        let method = &self.config.method;
+        let method = self.config.method.as_str();
+        if method == "quantile" {
+            return self.fallback_quantile(name, series);
+        }
+
         let thresholds = if method == "mdlp" {
             self.fit_mdlp(series, y, &mask, min_leaf)
         } else {
@@ -185,62 +193,61 @@ impl AdaptiveDiscretizer {
     ) -> Vec<Vec<String>> {
         let n_rows = data.len();
         let n_cols = feature_names.len();
-        let mut result: Vec<Vec<String>> = vec![vec!["missing".to_string(); n_cols]; n_rows];
+        let metas: Vec<Option<&FeatureMeta>> = feature_names
+            .iter()
+            .map(|name| self.feature_meta.get(name))
+            .collect();
 
-        for (fi, name) in feature_names.iter().enumerate() {
-            let meta = match self.feature_meta.get(name) {
-                Some(m) => m,
-                None => continue,
-            };
+        (0..n_rows)
+            .into_par_iter()
+            .map(|ri| {
+                let mut row = vec!["missing".to_string(); n_cols];
+                for fi in 0..n_cols {
+                    let Some(meta) = metas[fi] else {
+                        continue;
+                    };
+                    let val = data[ri][fi];
+                    if val.is_nan() {
+                        continue;
+                    }
 
-            for ri in 0..n_rows {
-                let val = data[ri][fi];
-                if val.is_nan() {
-                    result[ri][fi] = "missing".to_string();
-                    continue;
-                }
-
-                match meta.kind.as_str() {
-                    "continuous" => {
-                        if let Some(ref bins) = meta.bins {
-                            let bin_idx = find_bin(val, bins);
-                            if as_labels {
-                                if let Some(ref labels) = meta.labels {
-                                    result[ri][fi] = if bin_idx < labels.len() {
-                                        labels[bin_idx].clone()
+                    match meta.kind.as_str() {
+                        "continuous" => {
+                            if let Some(ref bins) = meta.bins {
+                                let bin_idx = find_bin(val, bins);
+                                if as_labels {
+                                    if let Some(ref labels) = meta.labels {
+                                        row[fi] = if bin_idx < labels.len() {
+                                            labels[bin_idx].clone()
+                                        } else {
+                                            "missing".to_string()
+                                        };
+                                    }
+                                } else {
+                                    row[fi] = bin_idx.to_string();
+                                }
+                            }
+                        }
+                        "categorical" => {
+                            if let Some(ref cats) = meta.categories {
+                                let idx = category_index(val, cats);
+                                if as_labels {
+                                    row[fi] = if idx < cats.len() {
+                                        cats[idx].clone()
                                     } else {
                                         "missing".to_string()
                                     };
                                 } else {
-                                    result[ri][fi] = "missing".to_string();
+                                    row[fi] = idx.to_string();
                                 }
-                            } else {
-                                result[ri][fi] = bin_idx.to_string();
                             }
                         }
+                        _ => {}
                     }
-                    "categorical" => {
-                        if as_labels {
-                            if let Some(ref cats) = meta.categories {
-                                let idx = category_index(val, cats);
-                                result[ri][fi] = if idx < cats.len() {
-                                    cats[idx].clone()
-                                } else {
-                                    "missing".to_string()
-                                };
-                            }
-                        } else {
-                            if let Some(ref cats) = meta.categories {
-                                let idx = category_index(val, cats);
-                                result[ri][fi] = idx.to_string();
-                            }
-                        }
-                    }
-                    _ => {}
                 }
-            }
-        }
-        result
+                row
+            })
+            .collect()
     }
 }
 

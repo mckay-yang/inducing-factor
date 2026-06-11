@@ -39,12 +39,15 @@ use gdal_crate::Dataset;
 use geo::algorithm::{BoundingRect, ClosestPoint, HaversineDistance};
 use geo::geometry::{Coord, LineString, Point};
 use geo::EuclideanDistance;
+use rayon::prelude::*;
 use rstar::{PointDistance, RTree, RTreeObject, AABB};
 use std::convert::TryInto;
 
 use loaders::base::{LoaderError, LoaderResult};
 
+use crate::aoi_mask::AoiMask;
 use crate::class_grid::ClassGrid;
+use crate::raster_distance;
 
 // ── Indexed segment ───────────────────────────────────────────────
 
@@ -291,6 +294,16 @@ fn discover_years(road_dir: &Path) -> LoaderResult<Vec<i32>> {
 
 const TILE_SIZE: usize = 1024;
 
+fn effective_workers(configured_workers: usize) -> usize {
+    if configured_workers > 0 {
+        configured_workers
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    }
+}
+
 /// Compute distances for a single tile into `out`.
 fn compute_tile(
     tree: &RTree<SegmentGeom>,
@@ -299,12 +312,18 @@ fn compute_tile(
     row_off: usize,
     tile_w: usize,
     tile_h: usize,
+    aoi_tile_mask: &[bool],
     out: &mut [f32],
 ) {
     for r in 0..tile_h {
         for c in 0..tile_w {
-            let (lng, lat) = class_grid.pixel_to_geo(row_off + r, col_off + c);
             let idx = r * tile_w + c;
+            if !aoi_tile_mask[idx] {
+                out[idx] = f32::NAN;
+                continue;
+            }
+
+            let (lng, lat) = class_grid.pixel_to_geo(row_off + r, col_off + c);
 
             let candidates = tree.nearest_neighbor_iter(&[lng, lat]);
             let mut best_m = f64::INFINITY;
@@ -332,19 +351,22 @@ fn compute_tile(
 fn write_tiled_raster(
     tree: &RTree<SegmentGeom>,
     class_grid: &ClassGrid,
+    aoi_mask: &AoiMask,
     output_path: &Path,
     label: &str,
+    workers: usize,
 ) -> LoaderResult<()> {
     let width = class_grid.width();
     let height = class_grid.height();
     let geo_transform = *class_grid.geo_transform();
     let crs_wkt = class_grid.crs().to_string();
 
-    log::info!(
-        "{} distance raster: {}x{} → {}",
+    crate::status!(
+        "[road-distance] {} start: {}x{}, workers={} -> {}",
         label,
         width,
         height,
+        workers,
         output_path.display()
     );
 
@@ -375,8 +397,16 @@ fn write_tiled_raster(
     let tiles_x = (width + TILE_SIZE - 1) / TILE_SIZE;
     let tiles_y = (height + TILE_SIZE - 1) / TILE_SIZE;
     let total_tiles = tiles_x * tiles_y;
+    let batch_size = workers.saturating_mul(2).max(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .map_err(|e| LoaderError::Gdal(format!("build road distance thread pool: {e}")))?;
 
     let mut completed: usize = 0;
+    let mut finite_pixels: usize = 0;
+    let mut tile_specs = Vec::with_capacity(total_tiles);
+    let mut candidate_tiles = 0usize;
 
     for ty in 0..tiles_y {
         let row_off = ty * TILE_SIZE;
@@ -385,18 +415,50 @@ fn write_tiled_raster(
         for tx in 0..tiles_x {
             let col_off = tx * TILE_SIZE;
             let tile_w = (width - col_off).min(TILE_SIZE);
+            let intersects_aoi_bounds =
+                aoi_mask.window_intersects_bounds(class_grid, row_off, col_off, tile_w, tile_h);
+            if intersects_aoi_bounds {
+                candidate_tiles += 1;
+            }
+            tile_specs.push((col_off, row_off, tile_w, tile_h, intersects_aoi_bounds));
+        }
+    }
+    crate::status!(
+        "[road-distance] {} AOI candidate tiles: {candidate_tiles}/{total_tiles}",
+        label
+    );
 
-            let mut tile_data = vec![0.0f32; tile_w * tile_h];
-            compute_tile(
-                tree,
-                class_grid,
-                col_off,
-                row_off,
-                tile_w,
-                tile_h,
-                &mut tile_data,
-            );
+    for batch in tile_specs.chunks(batch_size) {
+        let computed_tiles: Vec<(usize, usize, usize, usize, Vec<f32>)> = pool.install(|| {
+            batch
+                .par_iter()
+                .map(
+                    |&(col_off, row_off, tile_w, tile_h, intersects_aoi_bounds)| {
+                        let mut tile_data = vec![f32::NAN; tile_w * tile_h];
+                        if intersects_aoi_bounds {
+                            let aoi_tile_mask =
+                                aoi_mask.tile_mask(class_grid, row_off, col_off, tile_w, tile_h);
+                            if aoi_tile_mask.iter().any(|inside| *inside) {
+                                compute_tile(
+                                    tree,
+                                    class_grid,
+                                    col_off,
+                                    row_off,
+                                    tile_w,
+                                    tile_h,
+                                    &aoi_tile_mask,
+                                    &mut tile_data,
+                                );
+                            }
+                        }
+                        (col_off, row_off, tile_w, tile_h, tile_data)
+                    },
+                )
+                .collect()
+        });
 
+        for (col_off, row_off, tile_w, tile_h, tile_data) in computed_tiles {
+            finite_pixels += tile_data.iter().filter(|value| value.is_finite()).count();
             let mut buf = Buffer::new((tile_w, tile_h), tile_data);
             band.write(
                 (col_off as isize, row_off as isize),
@@ -407,8 +469,8 @@ fn write_tiled_raster(
 
             completed += 1;
             if completed % 100 == 0 || completed == total_tiles {
-                log::info!(
-                    "{}: {completed}/{total_tiles} tiles ({:.1}%)",
+                crate::status!(
+                    "[road-distance] {} progress: {completed}/{total_tiles} tiles ({:.1}%)",
                     label,
                     (completed as f64 / total_tiles as f64) * 100.0
                 );
@@ -419,7 +481,15 @@ fn write_tiled_raster(
     drop(band);
     drop(ds);
 
-    log::info!("{} raster written to {}", label, output_path.display());
+    if finite_pixels == 0 {
+        return Err(LoaderError::NoValidData);
+    }
+
+    crate::status!(
+        "[road-distance] {} complete: {}",
+        label,
+        output_path.display()
+    );
     Ok(())
 }
 
@@ -452,6 +522,18 @@ pub fn compute_road_distance_rasters(
     road_dir: &str,
     output_dir: &str,
 ) -> LoaderResult<Vec<i32>> {
+    let aoi_mask = AoiMask::from_grid_bounds(class_grid);
+    compute_road_distance_rasters_with_workers(class_grid, &aoi_mask, road_dir, output_dir, 1)
+}
+
+pub fn compute_road_distance_rasters_with_workers(
+    class_grid: &ClassGrid,
+    aoi_mask: &AoiMask,
+    road_dir: &str,
+    output_dir: &str,
+    workers: usize,
+) -> LoaderResult<Vec<i32>> {
+    let workers = effective_workers(workers);
     let road_dir_path = Path::new(road_dir);
     if !road_dir_path.is_dir() {
         return Err(LoaderError::Io(std::io::Error::new(
@@ -470,11 +552,14 @@ pub fn compute_road_distance_rasters(
 
     // Discover all years in road_dir (2014–2024 typically)
     let available_years = discover_years(road_dir_path)?;
-    log::info!("Road data available for years: {:?}", available_years);
+    crate::status!(
+        "[road-distance] available source years: {:?}",
+        available_years
+    );
 
     // Determine target years from the CLASS grid (2016–2025)
     let target_years = class_grid.years();
-    log::info!("Target years from CLASS grid: {:?}", target_years);
+    crate::status!("[road-distance] target CLASS years: {:?}", target_years);
 
     // Only process years that have actual source data AND are in the CLASS range.
     let years_to_process: Vec<i32> = available_years
@@ -482,8 +567,8 @@ pub fn compute_road_distance_rasters(
         .filter(|y| target_years.contains(y))
         .copied()
         .collect();
-    log::info!(
-        "Years with actual source data in CLASS range: {:?}",
+    crate::status!(
+        "[road-distance] years with source data in CLASS range: {:?}",
         years_to_process
     );
 
@@ -523,14 +608,21 @@ pub fn compute_road_distance_rasters(
         }
 
         if all_exist {
-            log::info!("Year {}: all three rasters exist, skipping", year);
+            crate::status!("[road-distance] year {} all rasters exist, skipping", year);
         }
     }
 
     if tasks.is_empty() {
-        log::info!("All road distance rasters already exist — nothing to do");
+        crate::status!("[road-distance] all rasters already exist, nothing to do");
         return Ok(Vec::new());
     }
+
+    crate::status!(
+        "[road-distance] tasks to write: {} rasters, workers={} -> {}",
+        tasks.len(),
+        workers,
+        out_dir.display()
+    );
 
     // ── R‑tree cache (keyed by source path) ────────────────────
     let mut rtree_cache: HashMap<PathBuf, RTree<SegmentGeom>> = HashMap::new();
@@ -539,21 +631,31 @@ pub fn compute_road_distance_rasters(
     // Group tasks by source_path so consecutive same-source tasks reuse the R‑tree
     for task in &tasks {
         if !rtree_cache.contains_key(&task.source_path) {
-            log::info!(
-                "Building R-tree for {} (year {})",
+            crate::status!(
+                "[road-distance] build R-tree: {} (year {})",
                 task.source_path.display(),
                 task.source_year
             );
             let tree = build_rtree(&task.source_path)?;
             rtree_cache.insert(task.source_path.clone(), tree);
         } else {
-            log::info!("Reusing cached R-tree for {}", task.source_path.display(),);
+            crate::status!(
+                "[road-distance] reuse R-tree: {}",
+                task.source_path.display()
+            );
         }
 
         let tree = rtree_cache.get(&task.source_path).unwrap();
         let label = format!("{}_Y{}", task.road_type.output_prefix(), task.source_year,);
 
-        write_tiled_raster(tree, class_grid, &task.output_path, &label)?;
+        write_tiled_raster(
+            tree,
+            class_grid,
+            aoi_mask,
+            &task.output_path,
+            &label,
+            workers,
+        )?;
 
         if !processed_years.contains(&task.source_year) {
             processed_years.push(task.source_year);
@@ -561,11 +663,125 @@ pub fn compute_road_distance_rasters(
     }
 
     processed_years.sort_unstable();
-    log::info!(
-        "Road distance computation complete. Processed years: {:?}",
+    crate::status!(
+        "[road-distance] complete. processed years: {:?}",
         processed_years
     );
 
+    Ok(processed_years)
+}
+
+pub fn compute_road_distance_rasters_rasterized(
+    class_grid: &ClassGrid,
+    aoi_mask: &AoiMask,
+    aoi_path: &Path,
+    road_dir: &str,
+    output_dir: &str,
+) -> LoaderResult<Vec<i32>> {
+    let road_dir_path = Path::new(road_dir);
+    if !road_dir_path.is_dir() {
+        return Err(LoaderError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("road_dir not found: {road_dir}"),
+        )));
+    }
+
+    let out_dir = Path::new(output_dir);
+    std::fs::create_dir_all(out_dir).map_err(|e| {
+        LoaderError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("create output dir {output_dir}: {e}"),
+        ))
+    })?;
+
+    let available_years = discover_years(road_dir_path)?;
+    crate::status!(
+        "[road-distance] available source years: {:?}",
+        available_years
+    );
+
+    let target_years = class_grid.years();
+    crate::status!("[road-distance] target CLASS years: {:?}", target_years);
+
+    let years_to_process: Vec<i32> = available_years
+        .iter()
+        .filter(|y| target_years.contains(y))
+        .copied()
+        .collect();
+    crate::status!(
+        "[road-distance] years with source data in CLASS range: {:?}",
+        years_to_process
+    );
+
+    #[derive(Debug, Clone)]
+    struct YearTypeTask {
+        source_year: i32,
+        road_type: RoadType,
+        source_path: PathBuf,
+        output_path: PathBuf,
+    }
+
+    let types = [RoadType::Road, RoadType::Railway, RoadType::Waterway];
+    let mut tasks = Vec::new();
+    for &year in &years_to_process {
+        let mut all_exist = true;
+        for &rt in &types {
+            let out_path = out_dir.join(format!("{}_{}.tif", rt.output_prefix(), year));
+            let src_path = road_dir_path.join(format!("osm_{}_{}.shp", year, rt.file_pattern()));
+            if !out_path.exists() {
+                all_exist = false;
+                tasks.push(YearTypeTask {
+                    source_year: year,
+                    road_type: rt,
+                    source_path: src_path,
+                    output_path: out_path,
+                });
+            }
+        }
+        if all_exist {
+            crate::status!("[road-distance] year {year} all rasters exist, skipping");
+        }
+    }
+
+    if tasks.is_empty() {
+        crate::status!("[road-distance] all rasters already exist, nothing to do");
+        return Ok(Vec::new());
+    }
+
+    crate::status!(
+        "[road-distance] rasterized tasks to write: {} rasters -> {}",
+        tasks.len(),
+        out_dir.display()
+    );
+
+    let work_root = out_dir.join("_distance_work");
+    let mut processed_years = Vec::new();
+    for task in &tasks {
+        let label = format!("{}_Y{}", task.road_type.output_prefix(), task.source_year);
+        crate::status!(
+            "[road-distance] rasterized {label}: {} -> {}",
+            task.source_path.display(),
+            task.output_path.display()
+        );
+        raster_distance::compute_vector_distance_raster(
+            class_grid,
+            aoi_mask,
+            aoi_path,
+            &task.source_path,
+            &task.output_path,
+            &work_root,
+            &label,
+        )?;
+        if !processed_years.contains(&task.source_year) {
+            processed_years.push(task.source_year);
+        }
+    }
+
+    processed_years.sort_unstable();
+    crate::status!(
+        "[road-distance] rasterized complete. processed years: {:?}",
+        processed_years
+    );
     Ok(processed_years)
 }
 
@@ -643,7 +859,19 @@ mod tests {
         let out_str = out_path.to_str().unwrap();
 
         let tree = build_rtree(Path::new(&shp_path)).unwrap();
-        write_tiled_raster(&tree, &class_grid, Path::new(out_str), "road_test").unwrap();
+        let aoi_mask = AoiMask::from_rect(geo::Rect::new(
+            geo::Coord { x: 100.0, y: 30.13 },
+            geo::Coord { x: 100.05, y: 30.2 },
+        ));
+        write_tiled_raster(
+            &tree,
+            &class_grid,
+            &aoi_mask,
+            Path::new(out_str),
+            "road_test",
+            2,
+        )
+        .unwrap();
 
         assert!(out_path.exists(), "Output raster must exist");
 
@@ -660,6 +888,18 @@ mod tests {
         assert!(
             finite_count > 0,
             "Expected some finite distance values, got none"
+        );
+        assert!(
+            arr.iter().any(|v| v.is_nan()),
+            "Expected AOI-external pixels to remain NaN"
+        );
+        assert!(
+            arr[0].is_finite(),
+            "Top-left pixel is inside the synthetic AOI and should be computed"
+        );
+        assert!(
+            arr[w * h - 1].is_nan(),
+            "Bottom-right pixel is outside the synthetic AOI and should be NaN"
         );
     }
 

@@ -252,8 +252,8 @@ cargo run --manifest-path .temp/full_basin_driver/Cargo.toml
 然后训练和预测：
 
 ```bash
-cargo run -p cli -- train-workflow --config configs/class_basin_workflow.json
-cargo run -p cli -- predict-workflow --config configs/class_basin_workflow.json
+cargo run -p if-cli -- train-workflow --config configs/class_basin_workflow.json
+cargo run -p if-cli -- predict-workflow --config configs/class_basin_workflow.json
 ```
 
 最终需要验证：
