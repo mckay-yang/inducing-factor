@@ -73,6 +73,8 @@ enum Commands {
 enum RefreshCacheArg {
     /// Rebuild climate-derived feature caches and downstream model/prediction outputs
     ClimateFeatures,
+    /// Rebuild model, interaction summaries, and prediction rasters while preserving feature parquet caches
+    ModelOutputs,
 }
 
 fn main() {
@@ -101,6 +103,7 @@ fn main() {
         } => {
             let refresh_cache = refresh_cache.map(|value| match value {
                 RefreshCacheArg::ClimateFeatures => commands::WorkflowRefreshCache::ClimateFeatures,
+                RefreshCacheArg::ModelOutputs => commands::WorkflowRefreshCache::ModelOutputs,
             });
             commands::run_workflow(&config, skip_data_process, refresh_cache);
         }

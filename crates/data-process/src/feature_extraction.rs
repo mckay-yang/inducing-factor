@@ -37,7 +37,7 @@ use gdal_crate::Dataset;
 /// combined DataFrame to `output_parquet`.
 ///
 /// The base directory is derived from the training parquet path:
-/// `.cache/features/training_points.parquet` → base = `.cache`.
+/// `data/cache/features/training_points.parquet` → base = `data/cache`.
 pub fn extract_training_features(training_parquet: &str, output_parquet: &str) -> LoaderResult<()> {
     extract_training_features_with_workers(training_parquet, output_parquet, 1)
 }
@@ -49,8 +49,8 @@ pub fn extract_training_features_with_workers(
 ) -> LoaderResult<()> {
     let training_path = Path::new(training_parquet);
     let base_dir = training_path
-        .parent() // .cache/features
-        .and_then(|p| p.parent()) // .cache
+        .parent() // data/cache/features
+        .and_then(|p| p.parent()) // data/cache
         .unwrap_or(Path::new("."));
 
     let resampled = base_dir.join("resampled");
@@ -425,9 +425,9 @@ pub fn extract_training_features_with_workers(
 // ── prediction feature extraction (tiled, full-AOI) ─────────────────────
 
 /// Extract features for every pixel in the CLASS grid for year 2025 using
-/// tiled processing.  Reads resampled rasters under `.cache/resampled/`,
+/// tiled processing.  Reads resampled rasters under `data/cache/resampled/`,
 /// computes slope/aspect from DEM, and writes per-tile parquet files to
-/// `output_dir` (e.g. `.cache/features/prediction_2025/`).
+/// `output_dir` (e.g. `data/cache/features/prediction_2025/`).
 ///
 /// * `class_grid` — reference grid providing dimensions and CRS
 /// * `aoi_mask` — AOI geometry mask in the CLASS grid CRS
@@ -2353,11 +2353,11 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let base = tmp.path();
 
-            // Directory structure: .cache/features/ and .cache/resampled/...
-            let features_dir = base.join(".cache").join("features");
+            // Directory structure: data/cache/features/ and data/cache/resampled/...
+            let features_dir = base.join("data").join("cache").join("features");
             std::fs::create_dir_all(&features_dir).unwrap();
 
-            let resampled = base.join(".cache").join("resampled");
+            let resampled = base.join("data").join("cache").join("resampled");
             let dem_dir = &resampled;
             let landuse_dir = resampled.join("landuse");
             let river_dir = resampled.join("river");
@@ -2511,10 +2511,10 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let base = tmp.path();
 
-            let features_dir = base.join(".cache").join("features");
+            let features_dir = base.join("data").join("cache").join("features");
             std::fs::create_dir_all(&features_dir).unwrap();
 
-            let resampled = base.join(".cache").join("resampled");
+            let resampled = base.join("data").join("cache").join("resampled");
             for sub in &[
                 "landuse",
                 "river",
@@ -2718,10 +2718,10 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let base = tmp.path();
 
-            let features_dir = base.join(".cache").join("features");
+            let features_dir = base.join("data").join("cache").join("features");
             std::fs::create_dir_all(&features_dir).unwrap();
 
-            let road_dir = base.join(".cache").join("resampled").join("road");
+            let road_dir = base.join("data").join("cache").join("resampled").join("road");
             std::fs::create_dir_all(&road_dir).unwrap();
 
             // Only road_dist_2016.tif exists (not 2018).

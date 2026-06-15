@@ -1,8 +1,8 @@
 # Production configuration using a clean cache/output location.
 
 paths:
-  cache_dir: "cache/chunks"
-  out_dir: "results/models"
+  cache_dir: "data/cache/chunks"
+  out_dir: "data/result/models"
 
 pipeline:
   start_year: 1990
@@ -38,16 +38,16 @@ attribution:
   predict_estimated_worker_gb: 1.0
 
 data_sources:
-  aoi_shp: "data/aoi/LangToBasighat.shp"
-  dem_tif: "data/dem/tibet_dem.tif"
-  landuse_dir: "data/landuse"
-  rainfall_dir: "data/rainfall"
-  temperature_dir: "data/temperature"
-  resident_dir: "data/resident"
-  river_shp_dir: "data/river"
-  road_shp_dir: "data/road"
-  ccdc_dir: "data/ccdc_res"
-  disturbance_class_tif: "data/disturbance_class/disturbance_class_res.tif"
+  aoi_shp: "data/input/aoi/LangToBasighat.shp"
+  dem_tif: "data/input/dem/tibet_dem.tif"
+  landuse_dir: "data/input/landuse"
+  rainfall_dir: "data/input/rainfall"
+  temperature_dir: "data/input/temperature"
+  resident_dir: "data/input/resident"
+  river_shp_dir: "data/input/river"
+  road_shp_dir: "data/input/road"
+  ccdc_dir: "data/input/ccdc_res"
+  disturbance_class_tif: "data/input/disturbance_class/disturbance_class_res.tif"
   landuse_file_pattern: "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
   road_file_pattern: "osm_{year}_roads.shp"
   railway_file_pattern: "osm_{year}_railways.shp"

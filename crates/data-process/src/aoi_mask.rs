@@ -229,8 +229,8 @@ mod tests {
 
     #[test]
     fn loads_formal_aoi_and_matches_class_center() {
-        let class_path = project_path("data/disturbance_class/disturbance_class_res.tif");
-        let aoi_path = project_path("data/aoi/LangToBasighat.shp");
+        let class_path = project_path("data/input/disturbance_class/disturbance_class_res.tif");
+        let aoi_path = project_path("data/input/aoi/LangToBasighat.shp");
         let class_grid = ClassGrid::open(&class_path.to_string_lossy(), 2016).unwrap();
         let mask = AoiMask::load(&aoi_path, &class_grid).unwrap();
 

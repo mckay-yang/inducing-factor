@@ -326,12 +326,12 @@ mod tests {
     use std::path::PathBuf;
 
     fn class_path() -> String {
-        project_path("data/disturbance_class/disturbance_class_res.tif")
+            project_path("data/input/disturbance_class/disturbance_class_res.tif")
     }
 
     #[allow(dead_code)]
     fn ccdc_dir() -> String {
-        project_path(".cache/resampled/ccdc")
+        project_path("data/cache/resampled/ccdc")
     }
 
     fn project_path(rel: &str) -> String {

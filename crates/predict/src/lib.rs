@@ -95,6 +95,7 @@ pub struct BasinPredictReport {
     pub dominant_factor_path: Option<PathBuf>,
     pub disturbance_type_path: Option<PathBuf>,
     pub disturbance_type_probability_paths: Vec<PathBuf>,
+    pub disturbance_type_dominant_factor_paths: Vec<PathBuf>,
     pub missing_data_mask_path: Option<PathBuf>,
     pub tiles_processed: usize,
     pub pixels_processed: usize,
@@ -136,12 +137,24 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
     let wants_dominant = request
         .products
         .contains(&PredictionProduct::DominantFactor);
-    let wants_disturbance_type = request
+    let requested_disturbance_type = request
         .products
         .contains(&PredictionProduct::DisturbanceType);
-    let wants_type_probability = request
+    let requested_type_probability = request
         .products
         .contains(&PredictionProduct::DisturbanceTypeProbability);
+    let has_type_model = model
+        .class_engine
+        .as_ref()
+        .map(|engine| !engine.classes.is_empty())
+        .unwrap_or(false);
+    if (requested_disturbance_type || requested_type_probability) && !has_type_model {
+        status!(
+            "[predict] disturbance type products requested but no trained class_engine is present; skip type rasters instead of writing empty placeholders"
+        );
+    }
+    let wants_disturbance_type = requested_disturbance_type && has_type_model;
+    let wants_type_probability = requested_type_probability && has_type_model;
     let wants_missing = request
         .products
         .contains(&PredictionProduct::MissingDataMask);
@@ -174,6 +187,20 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
     } else {
         Vec::new()
     };
+    let disturbance_type_dominant_factor_paths: Vec<PathBuf> =
+        if wants_type_probability && wants_dominant {
+            disturbance_type_specs()
+                .iter()
+                .map(|spec| {
+                    request.output_dir.join(format!(
+                        "disturbance_type_{}_dominant_factor_{}.tif",
+                        spec.name, request.prediction_year
+                    ))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
     let missing_data_mask_path = wants_missing.then(|| {
         request
             .output_dir
@@ -184,10 +211,16 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
         dominant_factor_path.as_ref(),
         disturbance_type_path.as_ref(),
         &disturbance_type_probability_paths,
+        &disturbance_type_dominant_factor_paths,
         missing_data_mask_path.as_ref(),
     );
     let workers = effective_workers(request.workers);
-    if !requested_outputs.is_empty() && requested_outputs.iter().all(|path| file_is_nonempty(path))
+    if std::env::var("PREDICT_SKIP_EXISTING_OUTPUTS")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && !requested_outputs.is_empty()
+        && requested_outputs.iter().all(|path| file_is_nonempty(path))
     {
         status!(
             "[predict] all requested outputs exist, skip: {} files",
@@ -198,6 +231,7 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
             dominant_factor_path,
             disturbance_type_path,
             disturbance_type_probability_paths,
+            disturbance_type_dominant_factor_paths,
             missing_data_mask_path,
             tiles_processed: 0,
             pixels_processed: 0,
@@ -229,6 +263,10 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
         .iter()
         .map(|path| create_tiff::<f32>(path, &class_grid, Some(f64::NAN)))
         .collect::<Result<_, _>>()?;
+    let mut disturbance_type_dominant_ds: Vec<Dataset> = disturbance_type_dominant_factor_paths
+        .iter()
+        .map(|path| create_tiff::<i16>(path, &class_grid, Some(0.0)))
+        .collect::<Result<_, _>>()?;
     let mut missing_ds = match &missing_data_mask_path {
         Some(path) => Some(create_tiff::<u8>(path, &class_grid, Some(255.0))?),
         None => None,
@@ -242,6 +280,9 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
             )),
             &model,
         )?;
+        if let Some(model_dir) = request.model_path.parent() {
+            write_factor_legend(&model_dir.join("dominant_factor_mapping.json"), &model)?;
+        }
     }
     if wants_disturbance_type || wants_type_probability {
         write_disturbance_type_legend(&request.output_dir.join(format!(
@@ -300,6 +341,9 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
             for (idx, ds) in disturbance_type_probability_ds.iter_mut().enumerate() {
                 write_tile_window(ds, &tile, &tile.disturbance_type_probabilities[idx])?;
             }
+            for (idx, ds) in disturbance_type_dominant_ds.iter_mut().enumerate() {
+                write_tile_window(ds, &tile, &tile.disturbance_type_dominant_factors[idx])?;
+            }
             if let Some(ref mut ds) = missing_ds {
                 write_tile_window(ds, &tile, &tile.missing_mask)?;
             }
@@ -326,6 +370,7 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
     drop(dominant_ds);
     drop(disturbance_type_ds);
     drop(disturbance_type_probability_ds);
+    drop(disturbance_type_dominant_ds);
     drop(missing_ds);
 
     status!(
@@ -340,6 +385,7 @@ pub fn predict_basin(request: &BasinPredictRequest) -> Result<BasinPredictReport
         dominant_factor_path,
         disturbance_type_path,
         disturbance_type_probability_paths,
+        disturbance_type_dominant_factor_paths,
         missing_data_mask_path,
         tiles_processed,
         pixels_processed,
@@ -352,6 +398,7 @@ fn requested_output_paths<'a>(
     dominant_factor_path: Option<&'a PathBuf>,
     disturbance_type_path: Option<&'a PathBuf>,
     disturbance_type_probability_paths: &'a [PathBuf],
+    disturbance_type_dominant_factor_paths: &'a [PathBuf],
     missing_data_mask_path: Option<&'a PathBuf>,
 ) -> Vec<&'a PathBuf> {
     let mut paths = Vec::new();
@@ -365,6 +412,7 @@ fn requested_output_paths<'a>(
         paths.push(path);
     }
     paths.extend(disturbance_type_probability_paths.iter());
+    paths.extend(disturbance_type_dominant_factor_paths.iter());
     if let Some(path) = missing_data_mask_path {
         paths.push(path);
     }
@@ -412,6 +460,7 @@ struct TilePredictions {
     dominant_factors: Vec<i16>,
     disturbance_types: Vec<i16>,
     disturbance_type_probabilities: [Vec<f32>; 4],
+    disturbance_type_dominant_factors: [Vec<i16>; 4],
     missing_mask: Vec<u8>,
 }
 
@@ -475,19 +524,44 @@ fn prepare_tile_predictions(
     let mut disturbance_type_tile = vec![0i16; n_cells];
     let mut disturbance_type_probability_tiles: [Vec<f32>; 4] =
         std::array::from_fn(|_| vec![f32::NAN; n_cells]);
+    let mut disturbance_type_dominant_tiles: [Vec<i16>; 4] =
+        std::array::from_fn(|_| vec![0i16; n_cells]);
     let mut missing_tile = vec![255u8; n_cells];
 
     if model.occurrence_engine.is_numeric_backend() {
-        let probabilities = model.occurrence_engine.predict_numeric_rows(&feature_data);
+        let (probabilities, dominant_factors) = model
+            .occurrence_engine
+            .predict_numeric_rows_with_dominant(&feature_data);
+        let class_outputs = model
+            .class_engine
+            .as_ref()
+            .filter(|engine| engine.is_numeric_backend())
+            .map(|engine| engine.predict_numeric_proba_with_dominant(&feature_data));
         for i in 0..df.height() {
             let local_row = rows[i] - row_off;
             let local_col = cols[i] - col_off;
             let idx = local_row * width + local_col;
-            probability_tile[idx] = probabilities.get(i).copied().unwrap_or(f64::NAN) as f32;
-            dominant_tile[idx] = 0;
-            disturbance_type_tile[idx] = 0;
-            for class_idx in 0..4 {
-                disturbance_type_probability_tiles[class_idx][idx] = f32::NAN;
+            let disturbance_probability = probabilities.get(i).copied().unwrap_or(f64::NAN);
+            probability_tile[idx] = disturbance_probability as f32;
+            dominant_tile[idx] = dominant_factors.get(i).copied().unwrap_or(0);
+            if let Some((class_probabilities, type_dominant)) = class_outputs.as_ref() {
+                let (class_value, joint_probabilities) = numeric_disturbance_type_prediction(
+                    class_probabilities.get(i).map(Vec::as_slice).unwrap_or(&[]),
+                    disturbance_probability,
+                );
+                disturbance_type_tile[idx] = class_value;
+                for class_idx in 0..4 {
+                    disturbance_type_probability_tiles[class_idx][idx] =
+                        joint_probabilities[class_idx];
+                    disturbance_type_dominant_tiles[class_idx][idx] =
+                        type_dominant.get(i).map(|row| row[class_idx]).unwrap_or(0);
+                }
+            } else {
+                disturbance_type_tile[idx] = 0;
+                for class_idx in 0..4 {
+                    disturbance_type_probability_tiles[class_idx][idx] = f32::NAN;
+                    disturbance_type_dominant_tiles[class_idx][idx] = 0;
+                }
             }
             missing_tile[idx] = if missing_by_row[i] { 1 } else { 0 };
         }
@@ -519,6 +593,7 @@ fn prepare_tile_predictions(
             disturbance_type_tile[idx] = class_value;
             for class_idx in 0..4 {
                 disturbance_type_probability_tiles[class_idx][idx] = class_probabilities[class_idx];
+                disturbance_type_dominant_tiles[class_idx][idx] = 0;
             }
             missing_tile[idx] = if missing_by_row[i] { 1 } else { 0 };
         }
@@ -534,8 +609,29 @@ fn prepare_tile_predictions(
         dominant_factors: dominant_tile,
         disturbance_types: disturbance_type_tile,
         disturbance_type_probabilities: disturbance_type_probability_tiles,
+        disturbance_type_dominant_factors: disturbance_type_dominant_tiles,
         missing_mask: missing_tile,
     })
+}
+
+fn numeric_disturbance_type_prediction(
+    conditional_probabilities: &[(i64, f64)],
+    disturbance_probability: f64,
+) -> (i16, [f32; 4]) {
+    let mut probabilities = [f32::NAN; 4];
+    let mut best_class = 0i16;
+    let mut best_probability = f64::NEG_INFINITY;
+    for &(class_value, conditional_probability) in conditional_probabilities {
+        if (1..=4).contains(&class_value) {
+            let joint = disturbance_probability * conditional_probability;
+            probabilities[class_value as usize - 1] = joint as f32;
+            if joint > best_probability {
+                best_probability = joint;
+                best_class = class_value as i16;
+            }
+        }
+    }
+    (best_class, probabilities)
 }
 
 fn collect_numeric_feature_column(df: &DataFrame, name: &str, n_rows: usize) -> Vec<f64> {
@@ -822,22 +918,62 @@ fn write_tile_window<T: gdal_crate::raster::GdalType + Copy>(
 }
 
 fn write_factor_legend(path: &Path, model: &BasinModelArtifact) -> Result<(), PredictError> {
-    let factors: Vec<serde_json::Value> = model
-        .selected_factors
-        .iter()
-        .enumerate()
-        .map(|(idx, factor)| {
-            serde_json::json!({
+    let factors: Vec<serde_json::Value> = if model.occurrence_engine.is_numeric_backend() {
+        let mut factors = Vec::new();
+        for (idx, name) in model
+            .occurrence_engine
+            .numeric_feature_columns
+            .iter()
+            .enumerate()
+        {
+            factors.push(serde_json::json!({
                 "map_value": idx + 1,
-                "factor_id": factor.factor_id,
-                "name": factor.name,
-                "semantics": factor.semantics,
-                "items": factor.items,
-                "score": factor.score,
-                "relative_risk": factor.relative_risk,
+                "kind": "main_effect",
+                "name": name,
+                "activation_midpoint": model.occurrence_engine.activation_midpoints.get(idx),
+                "learned_threshold": model.occurrence_engine.learned_thresholds.get(idx),
+                "interpretation_limit": "model contribution only; not causal",
+            }));
+        }
+        let offset = model.occurrence_engine.numeric_feature_columns.len();
+        for (idx, term) in model.occurrence_engine.interactions.iter().enumerate() {
+            factors.push(serde_json::json!({
+                "map_value": offset + idx + 1,
+                "kind": "interaction",
+                "factor_id": term.id,
+                "name": term.feature_names.join(" * "),
+                "order": term.order,
+                "feature_indices": term.feature_indices,
+                "weight": term.weight,
+                "support_pos": term.support_pos,
+                "support_neg": term.support_neg,
+                "lift": term.lift,
+                "score": term.score,
+                "activation_midpoints": &term.activation_midpoints,
+                "learned_thresholds": &term.learned_thresholds,
+                "explanation_text": &term.explanation_text,
+                "interpretation_limit": "highest positive model contribution / correlation; not causal",
+            }));
+        }
+        factors
+    } else {
+        model
+            .selected_factors
+            .iter()
+            .enumerate()
+            .map(|(idx, factor)| {
+                serde_json::json!({
+                    "map_value": idx + 1,
+                    "factor_id": factor.factor_id,
+                    "name": factor.name,
+                    "semantics": factor.semantics,
+                    "items": factor.items,
+                    "score": factor.score,
+                    "relative_risk": factor.relative_risk,
+                })
             })
-        })
-        .collect();
+            .collect()
+    };
     let raw = serde_json::to_string_pretty(&serde_json::json!({ "factors": factors }))?;
     fs::write(path, raw)?;
     Ok(())

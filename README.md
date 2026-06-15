@@ -96,7 +96,7 @@ data-process train predict
 
 ## Data Units
 
-- Temperature source files `data/temperature/tmp_YYYY.nc` store values in
+- Temperature source files `data/input/temperature/tmp_YYYY.nc` store values in
   tenths of degrees Celsius (`0.1 deg C`). A raw value of `253` means
   `25.3 deg C`.
 - Settlement rasters use categorical values `1=urban settlement` and

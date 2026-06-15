@@ -1,14 +1,14 @@
 # Full-extent analysis configuration.
 
 paths:
-  aoi_shp: "data/aoi/LangToBasighat.shp"
-  dem_tif: "data/dem/tibet_dem.tif"
-  road_shp: "data/road"
-  resident_shp: "data/resident"
-  ccdc_dir: "data/ccdc_res"
-  rainfall_dir: "data/rainfall"
-  temperature_dir: "data/temperature"
-  output_dir: "results/models"
+  aoi_shp: "data/input/aoi/LangToBasighat.shp"
+  dem_tif: "data/input/dem/tibet_dem.tif"
+  road_shp: "data/input/road"
+  resident_shp: "data/input/resident"
+  ccdc_dir: "data/input/ccdc_res"
+  rainfall_dir: "data/input/rainfall"
+  temperature_dir: "data/input/temperature"
+  output_dir: "data/result/models"
 
 time_series:
   start_year: 2015

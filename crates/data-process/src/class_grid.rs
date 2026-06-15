@@ -1,7 +1,7 @@
 //! ClassGrid — single reference grid for resampling and prediction.
 //!
 //! Wraps the multi-band disturbance classification raster
-//! (`data/disturbance_class/disturbance_class_res.tif`) which provides the
+//! (`data/input/disturbance_class/disturbance_class_res.tif`) which provides the
 //! canonical grid for all output rasters.  The raster is 62166×35095 pixels
 //! in EPSG:4326 with 10 bands (class_2016 … class_2025) stored as Int8.
 

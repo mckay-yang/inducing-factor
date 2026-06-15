@@ -1,7 +1,7 @@
 //! Road / railway / waterway distance raster computation.
 //!
 //! For each year in the CLASS grid range (2016–2025), loads the corresponding
-//! OSM shapefile from `data/road/` (e.g. `osm_2016_roads.shp`), builds an R-tree
+//! OSM shapefile from `data/input/road/` (e.g. `osm_2016_roads.shp`), builds an R-tree
 //! of individual line segments, then computes the Haversine distance (metres)
 //! from every CLASS-grid pixel centre to the nearest geometry.
 //!

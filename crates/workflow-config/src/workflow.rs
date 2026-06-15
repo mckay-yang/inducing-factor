@@ -132,7 +132,7 @@ pub struct ClassGridConfig {
 impl Default for ClassGridConfig {
     fn default() -> Self {
         Self {
-            raster: PathBuf::from("data/disturbance_class/disturbance_class_res.tif"),
+            raster: PathBuf::from("data/input/disturbance_class/disturbance_class_res.tif"),
             start_year: 2016,
         }
     }
@@ -155,15 +155,15 @@ pub struct WorkflowDataSources {
 impl Default for WorkflowDataSources {
     fn default() -> Self {
         Self {
-            aoi_shapefile: PathBuf::from("data/aoi/LangToBasighat.shp"),
-            dem_raster: PathBuf::from("data/dem/tibet_dem.tif"),
-            ccdc_dir: PathBuf::from("data/ccdc_res"),
-            rainfall_dir: PathBuf::from("data/rainfall"),
-            temperature_dir: PathBuf::from("data/temperature"),
-            landuse_dir: PathBuf::from("data/landuse"),
-            resident_raster: PathBuf::from("data/resident/GURS_2020.tif"),
-            river_shapefile: PathBuf::from("data/river/As_15s_Chimaps.shp"),
-            road_dir: PathBuf::from("data/road"),
+            aoi_shapefile: PathBuf::from("data/input/aoi/LangToBasighat.shp"),
+            dem_raster: PathBuf::from("data/input/dem/tibet_dem.tif"),
+            ccdc_dir: PathBuf::from("data/input/ccdc_res"),
+            rainfall_dir: PathBuf::from("data/input/rainfall"),
+            temperature_dir: PathBuf::from("data/input/temperature"),
+            landuse_dir: PathBuf::from("data/input/landuse"),
+            resident_raster: PathBuf::from("data/input/resident/GURS_2020.tif"),
+            river_shapefile: PathBuf::from("data/input/river/As_15s_Chimaps.shp"),
+            road_dir: PathBuf::from("data/input/road"),
         }
     }
 }
@@ -224,7 +224,7 @@ pub struct DataProcessConfig {
 impl Default for DataProcessConfig {
     fn default() -> Self {
         Self {
-            cache_dir: PathBuf::from(".cache"),
+            cache_dir: PathBuf::from("data/cache"),
             tile_size: 1024,
             temporal_context_years: 1,
             workers: 0,
@@ -255,7 +255,7 @@ impl Default for TrainConfig {
     fn default() -> Self {
         Self {
             training_years: vec![2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
-            model_dir: PathBuf::from("results/models"),
+            model_dir: PathBuf::from("data/result/models"),
             missing_data_policy: ModelMissingDataPolicy::NativeMissingCategory,
             discretizer_method: "supervised_tree".into(),
             discretize_bins: 3,
@@ -296,7 +296,7 @@ impl Default for PredictionConfig {
     fn default() -> Self {
         Self {
             prediction_year: 2025,
-            output_dir: PathBuf::from("results/predictions"),
+            output_dir: PathBuf::from("data/result/predictions"),
             products: vec![OutputProduct::Probability],
             workers: 0,
         }

@@ -233,7 +233,7 @@ fn line_string_to_segments(ls: &LineString<f64>, out: &mut Vec<SegmentGeom>) {
 ///
 /// # Arguments
 /// * `class_grid` — Reference grid providing dimensions and geotransform.
-/// * `river_path` — Path to the river shapefile (e.g. `data/river/As_15s_Chimaps.shp`).
+/// * `river_path` — Path to the river shapefile (e.g. `data/input/river/As_15s_Chimaps.shp`).
 /// * `output_path` — Destination GeoTIFF path.
 ///
 /// # Output

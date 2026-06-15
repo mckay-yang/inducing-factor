@@ -4,22 +4,22 @@ from typing import Optional
 
 @dataclass
 class PathsConfig:
-    cache_dir: str = "data/.cache/chunks"
-    out_dir: str = "data/.cache/patent_system"
+    cache_dir: str = "data/cache/chunks"
+    out_dir: str = "data/result/models"
 
 
 @dataclass
 class DataSourcesConfig:
-    aoi_shp: str = "data/aoi/LangToBasighat.shp"
-    dem_tif: str = "data/dem/tibet_dem.tif"
-    landuse_dir: str = "data/landuse"
-    rainfall_dir: str = "data/rainfall"
-    temperature_dir: str = "data/temperature"
-    resident_dir: str = "data/resident"
-    river_shp_dir: str = "data/river"
-    road_shp_dir: str = "data/road"
-    ccdc_dir: str = "data/ccdc_res"
-    disturbance_class_tif: str = "data/disturbance_class/disturbance_class_res.tif"
+    aoi_shp: str = "data/input/aoi/LangToBasighat.shp"
+    dem_tif: str = "data/input/dem/tibet_dem.tif"
+    landuse_dir: str = "data/input/landuse"
+    rainfall_dir: str = "data/input/rainfall"
+    temperature_dir: str = "data/input/temperature"
+    resident_dir: str = "data/input/resident"
+    river_shp_dir: str = "data/input/river"
+    road_shp_dir: str = "data/input/road"
+    ccdc_dir: str = "data/input/ccdc_res"
+    disturbance_class_tif: str = "data/input/disturbance_class/disturbance_class_res.tif"
     # Optional patterns
     landuse_file_pattern: str = "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
     road_file_pattern: str = "osm_{year}_roads.shp"

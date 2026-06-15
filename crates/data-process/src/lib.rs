@@ -530,7 +530,7 @@ mod tests {
                 road_dir: PathBuf::from("road"),
             },
             source_usage: DataSourceUsage::default(),
-            cache_dir: PathBuf::from(".cache"),
+            cache_dir: PathBuf::from("data/cache"),
             tile_size: 1024,
             processing_years: (2016..=2025).collect(),
             training_years: (2017..=2024).collect(),

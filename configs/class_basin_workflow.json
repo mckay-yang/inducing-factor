@@ -1,18 +1,18 @@
 {
   "class_grid": {
-    "raster": "data/disturbance_class/disturbance_class_res.tif",
+    "raster": "data/input/disturbance_class/disturbance_class_res.tif",
     "start_year": 2016
   },
   "data_sources": {
-    "aoi_shapefile": "data/aoi/LangToBasighat.shp",
-    "dem_raster": "data/dem/tibet_dem.tif",
-    "ccdc_dir": "data/ccdc_res",
-    "rainfall_dir": "data/rainfall",
-    "temperature_dir": "data/temperature",
-    "landuse_dir": "data/landuse",
-    "resident_raster": "data/resident/GURS_2020.tif",
-    "river_shapefile": "data/river/As_15s_Chimaps.shp",
-    "road_dir": "data/road"
+    "aoi_shapefile": "data/input/aoi/LangToBasighat.shp",
+    "dem_raster": "data/input/dem/tibet_dem.tif",
+    "ccdc_dir": "data/input/ccdc_res",
+    "rainfall_dir": "data/input/rainfall",
+    "temperature_dir": "data/input/temperature",
+    "landuse_dir": "data/input/landuse",
+    "resident_raster": "data/input/resident/GURS_2020.tif",
+    "river_shapefile": "data/input/river/As_15s_Chimaps.shp",
+    "road_dir": "data/input/road"
   },
   "data_usage": {
     "production": {
@@ -37,7 +37,7 @@
     }
   },
   "data_process": {
-    "cache_dir": ".cache",
+    "cache_dir": "data/cache",
     "tile_size": 256,
     "temporal_context_years": 1,
     "workers": 10
@@ -53,7 +53,7 @@
       2023,
       2024
     ],
-    "model_dir": "results/models",
+    "model_dir": "data/result/models",
     "missing_data_policy": "native_missing_category",
     "discretizer_method": "quantile",
     "discretize_bins": 3,
@@ -69,7 +69,7 @@
   },
   "predict": {
     "prediction_year": 2025,
-    "output_dir": "results/predictions",
+    "output_dir": "data/result/predictions",
     "products": [
       "probability",
       "dominant_factor",

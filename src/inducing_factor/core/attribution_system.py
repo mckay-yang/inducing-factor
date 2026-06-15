@@ -95,8 +95,8 @@ def _decode_disturbance_month(values: pd.Series, years: pd.Series) -> pd.Series:
 class EcoDisturbanceAttributionSystem:
     def __init__(
         self,
-        cache_dir: str = "data/.cache/chunks",
-        out_dir: str = "data/.cache/patent_system",
+        cache_dir: str = "data/cache/chunks",
+        out_dir: str = "data/result/models",
         lookback_years: int = 3,
         background_sample_rate: float = 0.05,
         discretizer_method: str = "supervised_tree",

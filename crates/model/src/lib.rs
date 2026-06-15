@@ -5,7 +5,9 @@
 //! on each other.
 
 use factor_core::discretize::AdaptiveDiscretizer;
-use factor_core::model::{DisturbanceClassEngine, OccurrenceProbabilityEngine};
+use factor_core::model::{
+    DisturbanceClassEngine, DisturbanceTypeDiagnostics, OccurrenceProbabilityEngine,
+};
 use factor_core::types::InducingFactor;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -33,6 +35,10 @@ pub struct BasinModelArtifact {
     pub backend: String,
     pub missing_data_policy: String,
     pub random_state: u64,
+    #[serde(default)]
+    pub type_diagnostics: Option<DisturbanceTypeDiagnostics>,
+    #[serde(default)]
+    pub prediction_feature_assumptions: serde_json::Value,
 }
 
 impl BasinModelArtifact {

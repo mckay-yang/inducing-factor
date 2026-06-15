@@ -1,6 +1,6 @@
 paths:
-  cache_dir: "cache/chunks"
-  out_dir: "results/models"
+  cache_dir: "data/cache/chunks"
+  out_dir: "data/result/models"
 
 pipeline:
   start_year: 1990

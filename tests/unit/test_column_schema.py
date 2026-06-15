@@ -146,7 +146,7 @@ class TestBadRunTrainingSamples:
 
     @pytest.fixture
     def bad_run_dir(self):
-        p = Path("results/bad_runs/20260602T010327Z")
+        p = Path("data/result/bad_runs/20260602T010327Z")
         if not p.is_dir():
             pytest.skip("Bad run archive not available")
         return p

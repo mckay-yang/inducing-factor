@@ -2,52 +2,52 @@
 # All paths must intersect with AOI; vector data should be clipped to AOI bounding box.
 
 aoi:
-  shp: "data/aoi/LangToBasighat.shp"
+  shp: "data/input/aoi/LangToBasighat.shp"
 
 dem:
-  tif: "data/dem/tibet_dem.tif"
+  tif: "data/input/dem/tibet_dem.tif"
   nodata: -9999
 
 landuse:
-  dir: "data/landuse"
+  dir: "data/input/landuse"
   is_temporal: true
   file_pattern: "CLCD_v01_{year}_albert_province/CLCD_v01_{year}_albert_xizang.tif"
 
 rainfall:
-  dir: "data/rainfall"
+  dir: "data/input/rainfall"
   monthly_file_pattern: "pre{year}{month:02d}.tif"
   # annual netcdf alternative (optional):
   # annual_file_pattern: "pre_{year}.nc"
   # variable: "pre"
 
 temperature:
-  dir: "data/temperature"
+  dir: "data/input/temperature"
   annual_file_pattern: "tmp_{year}.nc"
   variable: "tmp"
 
 resident:
-  dir: "data/resident"
+  dir: "data/input/resident"
   is_temporal: true
   file_pattern: "GURS_{year}.tif"
   nodata: 127.0
 
 river:
-  shp_dir: "data/river"
+  shp_dir: "data/input/river"
   # Use the Asia shapefile
   shp_file: "As_15s_Chimaps.shp"
 
 road:
-  shp_dir: "data/road"
+  shp_dir: "data/input/road"
   # Yearly road shapefile pattern (2014-2024)
   road_file_pattern: "osm_{year}_roads.shp"
   railway_file_pattern: "osm_{year}_railways.shp"
   waterway_file_pattern: "osm_{year}_waterways.shp"
 
 ccdc:
-  dir: "data/ccdc_res"
+  dir: "data/input/ccdc_res"
   file_pattern: "{year}.tif"
 
 # Processing cache and output directories (can be overridden in per-run configs)
 paths:
-  cache_dir: "cache/chunks"
-  out_dir: "results/models"
+  cache_dir: "data/cache/chunks"
+  out_dir: "data/result/models"

@@ -47,6 +47,7 @@ fn setup_logging() {
 #[derive(Clone, Copy, Debug)]
 pub enum WorkflowRefreshCache {
     ClimateFeatures,
+    ModelOutputs,
 }
 
 fn load_workflow_config(path: &Path) -> Option<WorkflowConfig> {
@@ -61,18 +62,18 @@ fn load_workflow_config(path: &Path) -> Option<WorkflowConfig> {
 
 fn data_process_request_from_workflow(config: &WorkflowConfig) -> DataProcessRequest {
     DataProcessRequest {
-        class_raster: config.class_grid.raster.clone(),
+        class_raster: resolve_existing_input_path(&config.class_grid.raster),
         class_start_year: config.class_grid.start_year,
         sources: DataProcessSources {
-            aoi_shapefile: config.data_sources.aoi_shapefile.clone(),
-            dem_raster: config.data_sources.dem_raster.clone(),
-            ccdc_dir: config.data_sources.ccdc_dir.clone(),
-            rainfall_dir: config.data_sources.rainfall_dir.clone(),
-            temperature_dir: config.data_sources.temperature_dir.clone(),
-            landuse_dir: config.data_sources.landuse_dir.clone(),
-            resident_raster: config.data_sources.resident_raster.clone(),
-            river_shapefile: config.data_sources.river_shapefile.clone(),
-            road_dir: config.data_sources.road_dir.clone(),
+            aoi_shapefile: resolve_existing_input_path(&config.data_sources.aoi_shapefile),
+            dem_raster: resolve_existing_input_path(&config.data_sources.dem_raster),
+            ccdc_dir: resolve_existing_input_path(&config.data_sources.ccdc_dir),
+            rainfall_dir: resolve_existing_input_path(&config.data_sources.rainfall_dir),
+            temperature_dir: resolve_existing_input_path(&config.data_sources.temperature_dir),
+            landuse_dir: resolve_existing_input_path(&config.data_sources.landuse_dir),
+            resident_raster: resolve_existing_input_path(&config.data_sources.resident_raster),
+            river_shapefile: resolve_existing_input_path(&config.data_sources.river_shapefile),
+            road_dir: resolve_existing_input_path(&config.data_sources.road_dir),
         },
         source_usage: data_source_usage_from_workflow(&config.data_usage.production),
         cache_dir: config.data_process.cache_dir.clone(),
@@ -109,6 +110,23 @@ fn train_plan_from_workflow(config: &WorkflowConfig) -> TrainPlan {
         missing_data_policy: train_missing_policy(&config.train.missing_data_policy),
         workers: config.train.workers,
     }
+}
+
+fn interaction_cache_dir_from_workflow(config: &WorkflowConfig) -> PathBuf {
+    config.data_process.cache_dir.join("interactions")
+}
+
+fn result_root_from_workflow(config: &WorkflowConfig) -> PathBuf {
+    config
+        .train
+        .model_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("data/result"))
+}
+
+fn result_tables_dir_from_workflow(config: &WorkflowConfig) -> PathBuf {
+    result_root_from_workflow(config).join("tables")
 }
 
 fn train_settings_from_workflow(config: &WorkflowConfig) -> BasinTrainSettings {
@@ -164,7 +182,7 @@ fn predict_plan_from_workflow(config: &WorkflowConfig) -> PredictPlan {
 fn predict_request_from_workflow(config: &WorkflowConfig) -> BasinPredictRequest {
     let plan = predict_plan_from_workflow(config);
     BasinPredictRequest {
-        class_raster: config.class_grid.raster.clone(),
+        class_raster: resolve_existing_input_path(&config.class_grid.raster),
         class_start_year: config.class_grid.start_year,
         model_path: plan.model_path,
         feature_dir: plan.feature_dir,
@@ -193,12 +211,13 @@ pub fn run_plan_workflow(config_path: &Path) {
         return;
     };
 
-    let class_grid = match GeoGrid::open(&config.class_grid.raster, config.class_grid.start_year) {
+    let class_raster = resolve_existing_input_path(&config.class_grid.raster);
+    let class_grid = match GeoGrid::open(&class_raster, config.class_grid.start_year) {
         Ok(grid) => grid,
         Err(e) => {
             error!(
                 "Failed to open CLASS grid {:?}: {}",
-                config.class_grid.raster, e
+                class_raster, e
             );
             return;
         }
@@ -317,7 +336,7 @@ pub fn run_predict_workflow(config_path: &Path) {
     match predict::predict_basin(&request) {
         Ok(report) => {
             status!(
-                "[predict-workflow] complete: tiles={}, pixels={}, workers={}, probability={:?}, dominant_factor={:?}, disturbance_type={:?}, type_probabilities={:?}, missing_mask={:?}, elapsed={:.2?}",
+                "[predict-workflow] complete: tiles={}, pixels={}, workers={}, probability={:?}, dominant_factor={:?}, disturbance_type={:?}, type_probabilities={:?}, type_dominant_factors={:?}, missing_mask={:?}, elapsed={:.2?}",
                 report.tiles_processed,
                 report.pixels_processed,
                 report.workers,
@@ -325,6 +344,7 @@ pub fn run_predict_workflow(config_path: &Path) {
                 report.dominant_factor_path,
                 report.disturbance_type_path,
                 report.disturbance_type_probability_paths,
+                report.disturbance_type_dominant_factor_paths,
                 report.missing_data_mask_path,
                 start_time.elapsed()
             );
@@ -439,7 +459,7 @@ pub fn run_workflow(
     match predict::predict_basin(&request) {
         Ok(report) => {
             status!(
-                "[run-workflow][predict] complete: tiles={}, pixels={}, workers={}, probability={:?}, dominant_factor={:?}, disturbance_type={:?}, type_probabilities={:?}, missing_mask={:?}",
+                "[run-workflow][predict] complete: tiles={}, pixels={}, workers={}, probability={:?}, dominant_factor={:?}, disturbance_type={:?}, type_probabilities={:?}, type_dominant_factors={:?}, missing_mask={:?}",
                 report.tiles_processed,
                 report.pixels_processed,
                 report.workers,
@@ -447,6 +467,7 @@ pub fn run_workflow(
                 report.dominant_factor_path,
                 report.disturbance_type_path,
                 report.disturbance_type_probability_paths,
+                report.disturbance_type_dominant_factor_paths,
                 report.missing_data_mask_path
             );
         }
@@ -475,7 +496,40 @@ fn refresh_workflow_cache(
 ) -> std::io::Result<()> {
     match refresh_cache {
         WorkflowRefreshCache::ClimateFeatures => refresh_climate_feature_cache(config),
+        WorkflowRefreshCache::ModelOutputs => refresh_model_output_cache(config),
     }
+}
+
+fn refresh_model_output_cache(config: &WorkflowConfig) -> std::io::Result<()> {
+    let mut paths = vec![
+        interaction_cache_dir_from_workflow(config),
+        config.train.model_dir.join("basin_model.json"),
+        config.train.model_dir.join("basin_model_metadata.json"),
+        config.train.model_dir.join("interaction_factors.json"),
+        config.train.model_dir.join("dominant_factor_mapping.json"),
+        config.train.model_dir.join("learned_thresholds.json"),
+        config
+            .train
+            .model_dir
+            .join("disturbance_type_diagnostics.json"),
+        config
+            .train
+            .model_dir
+            .join("prediction_feature_assumptions.json"),
+        result_tables_dir_from_workflow(config).join("interaction_factor_ranking.csv"),
+        result_tables_dir_from_workflow(config).join("learned_thresholds.csv"),
+        result_tables_dir_from_workflow(config).join("dominant_factor_summary_2025.csv"),
+    ];
+    paths.extend(prediction_output_paths(config));
+
+    status!(
+        "[refresh-cache] model-outputs: removing {} model/interaction/prediction paths; preserving cached training and prediction feature parquet files",
+        paths.len()
+    );
+    for path in paths {
+        remove_path_if_exists(&path)?;
+    }
+    Ok(())
 }
 
 fn refresh_climate_feature_cache(config: &WorkflowConfig) -> std::io::Result<()> {
@@ -486,13 +540,22 @@ fn refresh_climate_feature_cache(config: &WorkflowConfig) -> std::io::Result<()>
         cache_dir
             .join("features")
             .join(format!("prediction_{prediction_year}")),
-        cache_dir.join("interactions"),
+        interaction_cache_dir_from_workflow(config),
         config.train.model_dir.join("basin_model.json"),
         config.train.model_dir.join("basin_model_metadata.json"),
         config.train.model_dir.join("interaction_factors.json"),
-        PathBuf::from("results")
-            .join("tables")
-            .join("interaction_factor_ranking.csv"),
+        config.train.model_dir.join("learned_thresholds.json"),
+        config
+            .train
+            .model_dir
+            .join("disturbance_type_diagnostics.json"),
+        config
+            .train
+            .model_dir
+            .join("prediction_feature_assumptions.json"),
+        result_tables_dir_from_workflow(config).join("interaction_factor_ranking.csv"),
+        result_tables_dir_from_workflow(config).join("learned_thresholds.csv"),
+        result_tables_dir_from_workflow(config).join("dominant_factor_summary_2025.csv"),
     ];
     paths.extend(prediction_output_paths(config));
 
@@ -513,15 +576,30 @@ fn prediction_output_paths(config: &WorkflowConfig) -> Vec<PathBuf> {
     paths.push(out_dir.join(format!("probability_{year}.tif")));
     paths.push(out_dir.join(format!("dominant_factor_{year}.tif")));
     paths.push(out_dir.join(format!("dominant_factor_{year}.legend.json")));
+    paths.push(out_dir.join(format!("dominant_factor_{year}_legend.json")));
     paths.push(out_dir.join(format!("disturbance_type_{year}.tif")));
     paths.push(out_dir.join(format!("disturbance_type_{year}.legend.json")));
+    paths.push(out_dir.join(format!("disturbance_type_{year}_legend.json")));
     paths.push(out_dir.join(format!("missing_data_mask_{year}.tif")));
     paths.push(out_dir.join(format!("missing_data_mask_{year}.legend.json")));
-    for class_id in 1..=3 {
-        paths.push(out_dir.join(format!(
-            "disturbance_type_{class_id}_probability_{year}.tif"
-        )));
-    }
+    paths.push(out_dir.join(format!("disturbance_type_fire_probability_{year}.tif")));
+    paths.push(out_dir.join(format!("disturbance_type_fire_dominant_factor_{year}.tif")));
+    paths.push(out_dir.join(format!("disturbance_type_logging_probability_{year}.tif")));
+    paths.push(out_dir.join(format!(
+        "disturbance_type_logging_dominant_factor_{year}.tif"
+    )));
+    paths.push(out_dir.join(format!(
+        "disturbance_type_geo_hazard_probability_{year}.tif"
+    )));
+    paths.push(out_dir.join(format!(
+        "disturbance_type_geo_hazard_dominant_factor_{year}.tif"
+    )));
+    paths.push(out_dir.join(format!(
+        "disturbance_type_road_construction_probability_{year}.tif"
+    )));
+    paths.push(out_dir.join(format!(
+        "disturbance_type_road_construction_dominant_factor_{year}.tif"
+    )));
     paths
 }
 
@@ -538,4 +616,19 @@ fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
         status!("[refresh-cache] removed file {}", path.display());
     }
     Ok(())
+}
+
+fn resolve_existing_input_path(path: &Path) -> PathBuf {
+    if path.exists() || path.is_absolute() {
+        return path.to_path_buf();
+    }
+    let Ok(suffix) = path.strip_prefix("data/input") else {
+        return path.to_path_buf();
+    };
+    let legacy = PathBuf::from("data").join(suffix);
+    if legacy.exists() {
+        legacy
+    } else {
+        path.to_path_buf()
+    }
 }

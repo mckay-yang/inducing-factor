@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::InducingFactor;
 
+fn default_activation_gamma() -> f64 {
+    1.5
+}
+
 // ── Matrix helpers ──────────────────────────────────────────────
 
 #[allow(non_snake_case)]
@@ -97,6 +101,24 @@ fn softmax(logits: &Array2<f64>) -> Array2<f64> {
         }
     }
     probs
+}
+
+fn softmax_vec(logits: &[f64]) -> Vec<f64> {
+    if logits.is_empty() {
+        return Vec::new();
+    }
+    let max = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut sum = 0.0;
+    let mut values = Vec::with_capacity(logits.len());
+    for &logit in logits {
+        let value = (logit - max).exp();
+        sum += value;
+        values.push(value);
+    }
+    if sum <= 0.0 || !sum.is_finite() {
+        return vec![0.0; logits.len()];
+    }
+    values.into_iter().map(|value| value / sum).collect()
 }
 
 // ── Factor activation ──────────────────────────────────────────
@@ -400,6 +422,7 @@ fn fit_logistic_binary_internal_impl(
 struct NumericBatchFit<'a> {
     feature_data: &'a [Vec<f64>],
     target: &'a [f64],
+    feature_names: &'a [String],
     means: &'a [f64],
     scales: &'a [f64],
     class_weight: &'a [f64],
@@ -458,20 +481,24 @@ fn fit_numeric_logistic_parallel(cfg: NumericBatchFit<'_>) -> (Vec<f64>, f64) {
                         };
                         let mut lin = intercept;
                         for col_idx in 0..n_cols {
-                            let x = standardize_value(
+                            let x = scaled_standardize_value(
                                 row.get(col_idx).copied().unwrap_or(f64::NAN),
                                 cfg.means[col_idx],
                                 cfg.scales[col_idx],
+                                cfg.feature_names.get(col_idx).map(String::as_str),
+                                climate_influence_scale(),
                             );
                             lin += weights[col_idx] * x;
                         }
                         let p = sigmoid(lin.clamp(-30.0, 30.0));
                         let residual = sample_weight * (p - y);
                         for col_idx in 0..n_cols {
-                            let x = standardize_value(
+                            let x = scaled_standardize_value(
                                 row.get(col_idx).copied().unwrap_or(f64::NAN),
                                 cfg.means[col_idx],
                                 cfg.scales[col_idx],
+                                cfg.feature_names.get(col_idx).map(String::as_str),
+                                climate_influence_scale(),
                             );
                             local_grad[col_idx] += residual * x;
                         }
@@ -557,6 +584,234 @@ fn fit_numeric_logistic_parallel(cfg: NumericBatchFit<'_>) -> (Vec<f64>, f64) {
     }
 
     (weights, intercept)
+}
+
+struct NumericInteractionBatchFit<'a> {
+    feature_data: &'a [Vec<f64>],
+    target: &'a [f64],
+    feature_names: &'a [String],
+    means: &'a [f64],
+    scales: &'a [f64],
+    class_weight: &'a [f64],
+    initial_weights: &'a [f64],
+    initial_intercept: f64,
+    baseline_weights: &'a [f64],
+    interaction_terms: &'a [NumericInteractionTerm],
+    activation_gamma: f64,
+    max_epochs: usize,
+    learning_rate: f64,
+    l2_penalty: f64,
+    progress: Option<&'a (dyn Fn(&str) + Sync)>,
+}
+
+fn fit_numeric_interaction_logistic_parallel(
+    cfg: NumericInteractionBatchFit<'_>,
+) -> (Vec<f64>, f64, Vec<f64>) {
+    let n_rows = cfg.feature_data.len();
+    let n_cols = cfg
+        .means
+        .len()
+        .min(cfg.scales.len())
+        .min(cfg.initial_weights.len())
+        .min(cfg.baseline_weights.len());
+    let n_interactions = cfg.interaction_terms.len();
+    if n_rows == 0 || n_cols == 0 {
+        return (vec![0.0; n_cols], 0.0, vec![0.0; n_interactions]);
+    }
+
+    let mut weights = cfg.initial_weights[..n_cols].to_vec();
+    let mut interaction_weights = vec![0.0; n_interactions];
+    let mut intercept = cfg.initial_intercept;
+    let mut prev_loss = f64::INFINITY;
+
+    for epoch in 0..cfg.max_epochs {
+        progress_log(
+            cfg.progress,
+            format!(
+                "[interaction-logistic] epoch {}/{} start, rows={}, main_dimensions={}, interaction_terms={}",
+                epoch + 1,
+                cfg.max_epochs,
+                n_rows,
+                n_cols,
+                n_interactions
+            ),
+        );
+
+        let grad_len = n_cols + n_interactions + 1;
+        let mut grad = vec![0.0; grad_len];
+        let mut weighted_loss = 0.0;
+        let mut pass_bucket = usize::MAX;
+
+        for segment in 0..4 {
+            let start = n_rows * segment / 4;
+            let end = n_rows * (segment + 1) / 4;
+            if start >= end {
+                continue;
+            }
+
+            let (segment_grad, segment_loss) = (start..end)
+                .into_par_iter()
+                .fold(
+                    || (vec![0.0; grad_len], 0.0f64),
+                    |(mut local_grad, mut local_loss), row_idx| {
+                        let row = &cfg.feature_data[row_idx];
+                        let y = cfg.target[row_idx];
+                        let sample_weight = if y > 0.5 {
+                            cfg.class_weight.get(1).copied().unwrap_or(1.0)
+                        } else {
+                            cfg.class_weight.first().copied().unwrap_or(1.0)
+                        };
+
+                        let mut standardized = vec![0.0; n_cols];
+                        let mut lin = intercept;
+                        for col_idx in 0..n_cols {
+                            let z = scaled_standardize_value(
+                                row.get(col_idx).copied().unwrap_or(f64::NAN),
+                                cfg.means[col_idx],
+                                cfg.scales[col_idx],
+                                cfg.feature_names.get(col_idx).map(String::as_str),
+                                climate_influence_scale(),
+                            );
+                            standardized[col_idx] = z;
+                            lin += weights[col_idx] * z;
+                        }
+
+                        for (term_idx, term) in cfg.interaction_terms.iter().enumerate() {
+                            let value = interaction_activation_product(
+                                &standardized,
+                                cfg.baseline_weights,
+                                &term.feature_indices,
+                                cfg.activation_gamma,
+                            );
+                            lin += interaction_weights[term_idx] * value;
+                        }
+
+                        let p = sigmoid(lin.clamp(-30.0, 30.0));
+                        let residual = sample_weight * (p - y);
+                        for col_idx in 0..n_cols {
+                            local_grad[col_idx] += residual * standardized[col_idx];
+                        }
+                        for term_idx in 0..n_interactions {
+                            let value = interaction_activation_product(
+                                &standardized,
+                                cfg.baseline_weights,
+                                &cfg.interaction_terms[term_idx].feature_indices,
+                                cfg.activation_gamma,
+                            );
+                            local_grad[n_cols + term_idx] += residual * value;
+                        }
+                        local_grad[grad_len - 1] += residual;
+
+                        let p_clamped = p.clamp(1e-12, 1.0 - 1e-12);
+                        local_loss += sample_weight
+                            * (-(y * p_clamped.ln() + (1.0 - y) * (1.0 - p_clamped).ln()));
+                        (local_grad, local_loss)
+                    },
+                )
+                .reduce(
+                    || (vec![0.0; grad_len], 0.0f64),
+                    |(mut grad_a, loss_a), (grad_b, loss_b)| {
+                        for (a, b) in grad_a.iter_mut().zip(grad_b.iter()) {
+                            *a += *b;
+                        }
+                        (grad_a, loss_a + loss_b)
+                    },
+                );
+
+            for (dst, src) in grad.iter_mut().zip(segment_grad.iter()) {
+                *dst += *src;
+            }
+            weighted_loss += segment_loss;
+            progress_rows(
+                cfg.progress,
+                "interaction-logistic",
+                epoch + 1,
+                cfg.max_epochs,
+                "gradient pass",
+                end,
+                n_rows,
+                &mut pass_bucket,
+            );
+        }
+
+        let n_inv = 1.0 / n_rows as f64;
+        for col_idx in 0..n_cols {
+            grad[col_idx] = grad[col_idx] * n_inv + cfg.l2_penalty * weights[col_idx] * n_inv;
+        }
+        for term_idx in 0..n_interactions {
+            let offset = n_cols + term_idx;
+            grad[offset] =
+                grad[offset] * n_inv + cfg.l2_penalty * interaction_weights[term_idx] * n_inv;
+        }
+        grad[grad_len - 1] *= n_inv;
+
+        let step = cfg.learning_rate / (1.0 + 0.05 * epoch as f64);
+        let mut max_delta: f64 = 0.0;
+        for col_idx in 0..n_cols {
+            let delta = step * grad[col_idx];
+            weights[col_idx] -= delta;
+            max_delta = max_delta.max(delta.abs());
+        }
+        for term_idx in 0..n_interactions {
+            let offset = n_cols + term_idx;
+            let delta = step * grad[offset];
+            interaction_weights[term_idx] -= delta;
+            max_delta = max_delta.max(delta.abs());
+        }
+        let intercept_delta = step * grad[grad_len - 1];
+        intercept -= intercept_delta;
+        max_delta = max_delta.max(intercept_delta.abs());
+
+        let l2 = weights.iter().map(|w| w * w).sum::<f64>()
+            + interaction_weights.iter().map(|w| w * w).sum::<f64>();
+        let avg_loss = weighted_loss * n_inv + 0.5 * cfg.l2_penalty * l2 * n_inv;
+        progress_log(
+            cfg.progress,
+            format!(
+                "[interaction-logistic] epoch {}/{} complete: loss={:.6}, step={:.5}, max_delta={:.6e}",
+                epoch + 1,
+                cfg.max_epochs,
+                avg_loss,
+                step,
+                max_delta
+            ),
+        );
+        if (prev_loss - avg_loss).abs() < 1e-7 || max_delta < 1e-7 {
+            progress_log(
+                cfg.progress,
+                format!(
+                    "[interaction-logistic] converged at epoch {}/{}",
+                    epoch + 1,
+                    cfg.max_epochs
+                ),
+            );
+            break;
+        }
+        prev_loss = avg_loss;
+    }
+
+    (weights, intercept, interaction_weights)
+}
+
+fn interaction_activation_product(
+    standardized: &[f64],
+    baseline_weights: &[f64],
+    indices: &[usize],
+    gamma: f64,
+) -> f64 {
+    let mut product = 1.0;
+    for &idx in indices {
+        let Some(&z) = standardized.get(idx) else {
+            return 0.0;
+        };
+        let direction = if baseline_weights.get(idx).copied().unwrap_or(0.0) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        product *= sigmoid(gamma * direction * z);
+    }
+    product
 }
 
 /// Multinomial (softmax) logistic regression via gradient-based optimization.
@@ -648,6 +903,126 @@ fn predict_softmax_proba(X: &Array2<f64>, weights: &[Vec<f64>], intercepts: &[f6
 
 // ── OccurrenceProbabilityEngine ────────────────────────────────
 
+/// Continuous high-order interaction term used by the numeric occurrence model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NumericInteractionTerm {
+    pub id: String,
+    pub order: usize,
+    pub feature_indices: Vec<usize>,
+    pub feature_names: Vec<String>,
+    pub weight: f64,
+    pub support_pos: f64,
+    pub support_neg: f64,
+    pub lift: f64,
+    pub log_lift: f64,
+    pub stability: f64,
+    pub score: f64,
+    #[serde(default)]
+    pub risk_thresholds: Vec<NumericRiskThreshold>,
+    #[serde(default)]
+    pub activation_midpoints: Vec<NumericRiskThreshold>,
+    #[serde(default)]
+    pub learned_thresholds: Vec<FeatureThreshold>,
+    #[serde(default)]
+    pub explanation_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NumericRiskThreshold {
+    pub feature_index: usize,
+    pub feature_name: String,
+    pub direction: String,
+    pub midpoint_value: f64,
+    pub z_midpoint: f64,
+    pub activation_midpoint: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LearnedBin {
+    pub lower: Option<f64>,
+    pub upper: Option<f64>,
+    pub pos_rate: f64,
+    pub neg_rate: f64,
+    pub lift: f64,
+    pub count_pos: usize,
+    pub count_neg: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeatureThreshold {
+    pub feature_name: String,
+    pub direction: String,
+    pub activation_midpoint: f64,
+    pub learned_threshold: Option<f64>,
+    #[serde(default)]
+    pub learned_bins: Vec<LearnedBin>,
+    pub method: String,
+    pub support_pos: f64,
+    pub support_neg: f64,
+    pub lift: f64,
+    pub youden_j: f64,
+    pub information_gain: f64,
+    pub auc_1d: f64,
+    pub confidence: String,
+    #[serde(default)]
+    pub warning: Option<String>,
+    #[serde(default)]
+    pub explanation_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct InteractionSearchConfig {
+    pub algorithm: String,
+    pub max_order: usize,
+    pub min_support_pos: f64,
+    pub min_lift: f64,
+    pub pair_beam: usize,
+    pub triple_beam: usize,
+    pub quad_beam: usize,
+    pub final_top: usize,
+    pub order2_bonus: f64,
+    pub order3_bonus: f64,
+    pub order4_bonus: f64,
+    #[serde(default = "default_climate_influence_scale")]
+    pub climate_influence_scale: f64,
+    #[serde(default = "default_climate_only_interaction_penalty")]
+    pub climate_only_interaction_penalty: f64,
+    #[serde(default = "default_mixed_climate_interaction_penalty")]
+    pub mixed_climate_interaction_penalty: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct InteractionSearchStats {
+    pub order2_total: usize,
+    pub strong_pairs: usize,
+    pub generated_triples_from_beam: usize,
+    pub strong_triples: usize,
+    pub generated_quads_from_beam: usize,
+    pub strong_quads: usize,
+    pub final_interactions: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TypeClassDiagnostic {
+    pub class_value: i64,
+    pub label: String,
+    pub positive_count: usize,
+    pub negative_count: usize,
+    pub positive_rate: f64,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DisturbanceTypeDiagnostics {
+    pub total_labeled: usize,
+    #[serde(default)]
+    pub classes: Vec<TypeClassDiagnostic>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub probability_semantics: String,
+}
+
 /// Engine for predicting disturbance occurrence probability.
 /// Trains a logistic regression on factor activations (binary matrix).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -671,6 +1046,28 @@ pub struct OccurrenceProbabilityEngine {
     /// Per-feature training scale used for z-score normalization.
     #[serde(default)]
     pub numeric_scales: Vec<f64>,
+    /// Baseline numeric weights used to orient continuous risk activations.
+    #[serde(default)]
+    pub baseline_weights: Vec<f64>,
+    /// Continuous interaction terms included in the enhanced numeric model.
+    #[serde(default)]
+    pub interactions: Vec<NumericInteractionTerm>,
+    /// Activation strength for risk-side fuzzy interactions.
+    #[serde(default = "default_activation_gamma")]
+    pub activation_gamma: f64,
+    /// Multiplicative scale applied to standardized rainfall/temperature features.
+    #[serde(default = "default_climate_influence_scale")]
+    pub climate_influence_scale: f64,
+    /// Mean-based activation midpoints. These are not learned risk thresholds.
+    #[serde(default)]
+    pub activation_midpoints: Vec<NumericRiskThreshold>,
+    /// Sample-learned thresholds and bins used only for explanation.
+    #[serde(default)]
+    pub learned_thresholds: Vec<FeatureThreshold>,
+    #[serde(default)]
+    pub interaction_search_config: InteractionSearchConfig,
+    #[serde(default)]
+    pub interaction_search_stats: InteractionSearchStats,
 }
 
 impl OccurrenceProbabilityEngine {
@@ -685,6 +1082,14 @@ impl OccurrenceProbabilityEngine {
             numeric_feature_columns: Vec::new(),
             numeric_means: Vec::new(),
             numeric_scales: Vec::new(),
+            baseline_weights: Vec::new(),
+            interactions: Vec::new(),
+            activation_gamma: default_activation_gamma(),
+            climate_influence_scale: default_climate_influence_scale(),
+            activation_midpoints: Vec::new(),
+            learned_thresholds: Vec::new(),
+            interaction_search_config: InteractionSearchConfig::default(),
+            interaction_search_stats: InteractionSearchStats::default(),
         }
     }
 
@@ -760,6 +1165,7 @@ impl OccurrenceProbabilityEngine {
         let (weights, intercept) = fit_numeric_logistic_parallel(NumericBatchFit {
             feature_data,
             target,
+            feature_names: &self.numeric_feature_columns,
             means: &self.numeric_means,
             scales: &self.numeric_scales,
             class_weight: &class_weight,
@@ -770,7 +1176,93 @@ impl OccurrenceProbabilityEngine {
         });
         self.weights = weights;
         self.intercept = intercept;
+        self.baseline_weights = self.weights.clone();
+        self.interactions.clear();
+        self.activation_gamma = default_activation_gamma();
+        self.climate_influence_scale = climate_influence_scale();
+        self.activation_midpoints.clear();
+        self.learned_thresholds.clear();
         self.backend = "numeric_parallel_logistic_regression".to_string();
+    }
+
+    pub fn fit_numeric_interactions_with_progress(
+        &mut self,
+        feature_data: &[Vec<f64>],
+        target: &[f64],
+        interaction_terms: &[NumericInteractionTerm],
+        activation_gamma: f64,
+        progress: &(dyn Fn(&str) + Sync),
+    ) {
+        let n_cols = self
+            .numeric_feature_columns
+            .len()
+            .min(self.weights.len())
+            .min(self.numeric_means.len())
+            .min(self.numeric_scales.len());
+        let mut terms: Vec<NumericInteractionTerm> = interaction_terms
+            .iter()
+            .filter(|term| {
+                !term.feature_indices.is_empty()
+                    && term.feature_indices.iter().all(|&idx| idx < n_cols)
+            })
+            .cloned()
+            .collect();
+        if n_cols == 0 || feature_data.is_empty() || target.is_empty() || terms.is_empty() {
+            self.baseline_weights = self.weights.clone();
+            self.interactions.clear();
+            self.activation_gamma = activation_gamma;
+            self.climate_influence_scale = climate_influence_scale();
+            return;
+        }
+
+        let baseline_weights = self.weights[..n_cols].to_vec();
+        let n_pos: f64 = target.iter().filter(|&&v| v > 0.5).count() as f64;
+        let n_neg = target.len() as f64 - n_pos;
+        if n_pos < 1.0 || n_neg < 1.0 {
+            self.baseline_weights = baseline_weights;
+            self.interactions.clear();
+            self.activation_gamma = activation_gamma;
+            self.climate_influence_scale = climate_influence_scale();
+            return;
+        }
+
+        let pos_weight = target.len() as f64 / (2.0 * n_pos.max(1.0));
+        let neg_weight = target.len() as f64 / (2.0 * n_neg.max(1.0));
+        let class_weight = vec![neg_weight, pos_weight];
+
+        let max_epochs = std::env::var("INTERACTION_LOGISTIC_EPOCHS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(15);
+        let (weights, intercept, interaction_weights) =
+            fit_numeric_interaction_logistic_parallel(NumericInteractionBatchFit {
+                feature_data,
+                target,
+                feature_names: &self.numeric_feature_columns[..n_cols],
+                means: &self.numeric_means[..n_cols],
+                scales: &self.numeric_scales[..n_cols],
+                class_weight: &class_weight,
+                initial_weights: &self.weights[..n_cols],
+                initial_intercept: self.intercept,
+                baseline_weights: &baseline_weights,
+                interaction_terms: &terms,
+                activation_gamma,
+                max_epochs,
+                learning_rate: 0.5,
+                l2_penalty: 1.0,
+                progress: Some(progress),
+            });
+        for (term, weight) in terms.iter_mut().zip(interaction_weights) {
+            term.weight = weight;
+        }
+        self.weights = weights;
+        self.intercept = intercept;
+        self.baseline_weights = baseline_weights;
+        self.interactions = terms;
+        self.activation_gamma = activation_gamma;
+        self.climate_influence_scale = climate_influence_scale();
+        self.backend = "numeric_logistic_regression_with_interactions".to_string();
     }
 
     pub fn predict_numeric_rows(&self, feature_data: &[Vec<f64>]) -> Vec<f64> {
@@ -786,18 +1278,103 @@ impl OccurrenceProbabilityEngine {
         feature_data
             .par_iter()
             .map(|row| {
-                let mut lin = self.intercept;
-                for col_idx in 0..n_cols {
-                    lin += self.weights[col_idx]
-                        * standardize_value(
-                            row.get(col_idx).copied().unwrap_or(f64::NAN),
-                            self.numeric_means[col_idx],
-                            self.numeric_scales[col_idx],
-                        );
-                }
+                let (lin, _) = self.numeric_logit_and_dominant(row, n_cols);
                 sigmoid(lin.clamp(-30.0, 30.0))
             })
             .collect()
+    }
+
+    pub fn predict_numeric_rows_with_dominant(
+        &self,
+        feature_data: &[Vec<f64>],
+    ) -> (Vec<f64>, Vec<i16>) {
+        if feature_data.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let n_cols = self
+            .numeric_feature_columns
+            .len()
+            .min(self.weights.len())
+            .min(self.numeric_means.len())
+            .min(self.numeric_scales.len());
+        let pairs: Vec<(f64, i16)> = feature_data
+            .par_iter()
+            .map(|row| {
+                let (lin, dominant) = self.numeric_logit_and_dominant(row, n_cols);
+                (sigmoid(lin.clamp(-30.0, 30.0)), dominant)
+            })
+            .collect();
+        pairs.into_iter().unzip()
+    }
+
+    fn numeric_logit_and_dominant(&self, row: &[f64], n_cols: usize) -> (f64, i16) {
+        let mut standardized = vec![0.0; n_cols];
+        let mut lin = self.intercept;
+        let mut best_value = 0.0;
+        let mut best_index = 0i16;
+        let mut best_priority = 0usize;
+        for col_idx in 0..n_cols {
+            let z = scaled_standardize_value(
+                row.get(col_idx).copied().unwrap_or(f64::NAN),
+                self.numeric_means[col_idx],
+                self.numeric_scales[col_idx],
+                self.numeric_feature_columns.get(col_idx).map(String::as_str),
+                self.climate_influence_scale,
+            );
+            standardized[col_idx] = z;
+            let contribution = self.weights[col_idx] * z;
+            lin += contribution;
+            let is_climate = self
+                .numeric_feature_columns
+                .get(col_idx)
+                .map(|name| is_climate_feature_name(name))
+                .unwrap_or(false);
+            if !is_climate
+                && contribution > 0.0
+                && (best_priority < 1 || (best_priority == 1 && contribution > best_value))
+            {
+                best_value = contribution;
+                best_index = (col_idx + 1) as i16;
+                best_priority = 1;
+            }
+        }
+
+        let baseline_weights = if self.baseline_weights.len() >= n_cols {
+            &self.baseline_weights[..n_cols]
+        } else {
+            &self.weights[..n_cols]
+        };
+        let dominant_interaction_limit = std::env::var("DOMINANT_INTERACTION_TOP_K")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(64);
+        for (term_idx, term) in self
+            .interactions
+            .iter()
+            .take(dominant_interaction_limit)
+            .enumerate()
+        {
+            let activation = interaction_activation_product(
+                &standardized,
+                baseline_weights,
+                &term.feature_indices,
+                self.activation_gamma,
+            );
+            let contribution = term.weight * activation;
+            lin += contribution;
+            let priority = interaction_dominance_priority(term.order);
+            if contribution > 0.0
+                && priority > 0
+                && (priority > best_priority
+                    || (priority == best_priority && contribution > best_value))
+            {
+                best_value = contribution;
+                best_index = (n_cols + term_idx + 1) as i16;
+                best_priority = priority;
+            }
+        }
+        (lin, best_index)
     }
 
     pub fn is_numeric_backend(&self) -> bool {
@@ -896,6 +1473,18 @@ impl OccurrenceProbabilityEngine {
     }
 }
 
+fn interaction_dominance_priority(order: usize) -> usize {
+    match order {
+        3 => 3,
+        2 => 2,
+        _ => 0,
+    }
+}
+
+fn is_climate_feature_name(name: &str) -> bool {
+    name.starts_with("rainfall_") || name.starts_with("temp_")
+}
+
 impl Default for OccurrenceProbabilityEngine {
     fn default() -> Self {
         Self::new()
@@ -959,6 +1548,45 @@ fn standardize_value(value: f64, mean: f64, scale: f64) -> f64 {
         1.0
     };
     ((filled - mean) / scale).clamp(-10.0, 10.0)
+}
+
+fn scaled_standardize_value(
+    value: f64,
+    mean: f64,
+    scale: f64,
+    feature_name: Option<&str>,
+    climate_scale: f64,
+) -> f64 {
+    let z = standardize_value(value, mean, scale);
+    if feature_name
+        .map(is_climate_feature_name)
+        .unwrap_or(false)
+    {
+        z * climate_scale.clamp(0.0, 1.0)
+    } else {
+        z
+    }
+}
+
+fn default_climate_influence_scale() -> f64 {
+    1.0
+}
+
+fn default_climate_only_interaction_penalty() -> f64 {
+    0.35
+}
+
+fn default_mixed_climate_interaction_penalty() -> f64 {
+    0.75
+}
+
+fn climate_influence_scale() -> f64 {
+    std::env::var("CLIMATE_INFLUENCE_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(0.0, 1.0))
+        .unwrap_or(0.65)
 }
 
 fn progress_log(progress: Option<&(dyn Fn(&str) + Sync)>, message: String) {
@@ -1026,6 +1654,27 @@ pub struct DisturbanceClassEngine {
     pub backend: String,
     /// Prior probabilities for each class (for fallback)
     pub priors: HashMap<i64, f64>,
+    /// Numeric feature columns used by numeric multiclass classification.
+    #[serde(default)]
+    pub numeric_feature_columns: Vec<String>,
+    /// Per-feature training mean inherited from the occurrence model.
+    #[serde(default)]
+    pub numeric_means: Vec<f64>,
+    /// Per-feature training scale inherited from the occurrence model.
+    #[serde(default)]
+    pub numeric_scales: Vec<f64>,
+    /// Baseline occurrence weights used to orient shared interaction activations.
+    #[serde(default)]
+    pub baseline_weights: Vec<f64>,
+    /// Shared interaction terms used as numeric multiclass features.
+    #[serde(default)]
+    pub interactions: Vec<NumericInteractionTerm>,
+    /// Activation strength for shared interaction features.
+    #[serde(default = "default_activation_gamma")]
+    pub activation_gamma: f64,
+    /// Multiplicative scale applied to standardized rainfall/temperature features.
+    #[serde(default = "default_climate_influence_scale")]
+    pub climate_influence_scale: f64,
 }
 
 impl DisturbanceClassEngine {
@@ -1043,7 +1692,336 @@ impl DisturbanceClassEngine {
             class_labels,
             backend: "multinomial_logistic".to_string(),
             priors: HashMap::new(),
+            numeric_feature_columns: Vec::new(),
+            numeric_means: Vec::new(),
+            numeric_scales: Vec::new(),
+            baseline_weights: Vec::new(),
+            interactions: Vec::new(),
+            activation_gamma: default_activation_gamma(),
+            climate_influence_scale: default_climate_influence_scale(),
         }
+    }
+
+    pub fn fit_numeric_with_interactions(
+        &mut self,
+        feature_columns: &[String],
+        feature_data: &[Vec<f64>],
+        class_values: &[f64],
+        class_mask: &[usize],
+        occurrence_engine: &OccurrenceProbabilityEngine,
+        progress: &(dyn Fn(&str) + Sync),
+    ) {
+        self.numeric_feature_columns = feature_columns.to_vec();
+        self.numeric_means = occurrence_engine.numeric_means.clone();
+        self.numeric_scales = occurrence_engine.numeric_scales.clone();
+        self.baseline_weights = if occurrence_engine.baseline_weights.is_empty() {
+            occurrence_engine.weights.clone()
+        } else {
+            occurrence_engine.baseline_weights.clone()
+        };
+        self.interactions = occurrence_engine.interactions.clone();
+        self.activation_gamma = occurrence_engine.activation_gamma;
+        self.climate_influence_scale = occurrence_engine.climate_influence_scale;
+        self.factor_ids.clear();
+
+        if class_mask.is_empty() || class_values.is_empty() {
+            self.backend = "numeric_multiclass_fallback_no_data".to_string();
+            return;
+        }
+
+        let mut unique_classes: Vec<i64> = class_values.iter().map(|&v| v as i64).collect();
+        unique_classes.sort();
+        unique_classes.dedup();
+        self.classes = unique_classes.clone();
+
+        let n_total = class_values.len() as f64;
+        self.priors.clear();
+        for &cls in &unique_classes {
+            let count = class_values.iter().filter(|&&v| (v as i64) == cls).count() as f64;
+            self.priors.insert(cls, count / n_total.max(1.0));
+        }
+
+        let n_cols = feature_columns
+            .len()
+            .min(self.numeric_means.len())
+            .min(self.numeric_scales.len())
+            .min(self.baseline_weights.len());
+        if unique_classes.is_empty() || n_cols == 0 {
+            self.backend = "numeric_multiclass_fallback_no_data".to_string();
+            return;
+        }
+
+        if unique_classes.len() == 1 {
+            self.weights = vec![vec![0.0; n_cols + self.interactions.len()]];
+            self.intercepts = vec![0.0];
+            self.backend = "numeric_multiclass_fallback_single_class".to_string();
+            return;
+        }
+
+        let masked_features: Vec<Vec<f64>> = class_mask
+            .iter()
+            .filter_map(|&idx| feature_data.get(idx).cloned())
+            .collect();
+        if masked_features.len() != class_values.len() {
+            self.backend = "numeric_multiclass_fallback_mask_mismatch".to_string();
+            return;
+        }
+
+        let max_epochs = std::env::var("TYPE_LOGISTIC_EPOCHS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(20);
+        let mut all_weights = Vec::with_capacity(unique_classes.len());
+        let mut intercepts = Vec::with_capacity(unique_classes.len());
+
+        for &class_value in &unique_classes {
+            progress(&format!(
+                "[type-logistic] train class {} vs rest: rows={}, main_dimensions={}, interaction_terms={}",
+                class_value,
+                masked_features.len(),
+                n_cols,
+                self.interactions.len()
+            ));
+            let target: Vec<f64> = class_values
+                .iter()
+                .map(|&value| {
+                    if value as i64 == class_value {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            let n_pos = target.iter().filter(|&&v| v > 0.5).count() as f64;
+            let n_neg = target.len() as f64 - n_pos;
+            if n_pos < 1.0 || n_neg < 1.0 {
+                all_weights.push(vec![0.0; n_cols + self.interactions.len()]);
+                intercepts.push(if n_pos > 0.0 { 10.0 } else { -10.0 });
+                continue;
+            }
+            let class_weight = vec![
+                target.len() as f64 / (2.0 * n_neg.max(1.0)),
+                target.len() as f64 / (2.0 * n_pos.max(1.0)),
+            ];
+            let initial_weights = vec![0.0; n_cols];
+            let prior = (n_pos / target.len() as f64).clamp(1e-6, 1.0 - 1e-6);
+            let initial_intercept = (prior / (1.0 - prior)).ln();
+            let (main_weights, intercept, interaction_weights) =
+                fit_numeric_interaction_logistic_parallel(NumericInteractionBatchFit {
+                    feature_data: &masked_features,
+                    target: &target,
+                    feature_names: &self.numeric_feature_columns[..n_cols],
+                    means: &self.numeric_means[..n_cols],
+                    scales: &self.numeric_scales[..n_cols],
+                    class_weight: &class_weight,
+                    initial_weights: &initial_weights,
+                    initial_intercept,
+                    baseline_weights: &self.baseline_weights[..n_cols],
+                    interaction_terms: &self.interactions,
+                    activation_gamma: self.activation_gamma,
+                    max_epochs,
+                    learning_rate: 0.4,
+                    l2_penalty: 1.0,
+                    progress: Some(progress),
+                });
+            let mut combined = main_weights;
+            combined.extend(interaction_weights);
+            all_weights.push(combined);
+            intercepts.push(intercept);
+        }
+
+        self.weights = all_weights;
+        self.intercepts = intercepts;
+        self.backend = "numeric_multiclass_logistic_with_interactions".to_string();
+    }
+
+    pub fn is_numeric_backend(&self) -> bool {
+        self.backend.starts_with("numeric_multiclass")
+            && !self.numeric_feature_columns.is_empty()
+            && !self.classes.is_empty()
+    }
+
+    pub fn predict_numeric_proba(&self, feature_data: &[Vec<f64>]) -> Vec<Vec<(i64, f64)>> {
+        if feature_data.is_empty() || self.classes.is_empty() {
+            return vec![Vec::new(); feature_data.len()];
+        }
+        if self.classes.len() == 1 {
+            let cls = self.classes[0];
+            return vec![vec![(cls, 1.0)]; feature_data.len()];
+        }
+        let n_cols = self
+            .numeric_feature_columns
+            .len()
+            .min(self.numeric_means.len())
+            .min(self.numeric_scales.len())
+            .min(self.baseline_weights.len());
+        feature_data
+            .par_iter()
+            .map(|row| {
+                let mut standardized = vec![0.0; n_cols];
+                for col_idx in 0..n_cols {
+                    standardized[col_idx] = scaled_standardize_value(
+                        row.get(col_idx).copied().unwrap_or(f64::NAN),
+                        self.numeric_means[col_idx],
+                        self.numeric_scales[col_idx],
+                        self.numeric_feature_columns.get(col_idx).map(String::as_str),
+                        self.climate_influence_scale,
+                    );
+                }
+                let interaction_values: Vec<f64> = self
+                    .interactions
+                    .iter()
+                    .map(|term| {
+                        interaction_activation_product(
+                            &standardized,
+                            &self.baseline_weights[..n_cols],
+                            &term.feature_indices,
+                            self.activation_gamma,
+                        )
+                    })
+                    .collect();
+                let mut logits = Vec::with_capacity(self.classes.len());
+                for class_idx in 0..self.classes.len() {
+                    let mut logit = self.intercepts.get(class_idx).copied().unwrap_or(0.0);
+                    if let Some(weights) = self.weights.get(class_idx) {
+                        for col_idx in 0..n_cols {
+                            logit += weights.get(col_idx).copied().unwrap_or(0.0)
+                                * standardized[col_idx];
+                        }
+                        for (term_idx, &value) in interaction_values.iter().enumerate() {
+                            logit += weights.get(n_cols + term_idx).copied().unwrap_or(0.0) * value;
+                        }
+                    }
+                    logits.push(logit);
+                }
+                let probs = softmax_vec(&logits);
+                self.classes.iter().copied().zip(probs).collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    pub fn predict_numeric_proba_with_dominant(
+        &self,
+        feature_data: &[Vec<f64>],
+    ) -> (Vec<Vec<(i64, f64)>>, Vec<[i16; 4]>) {
+        if feature_data.is_empty() || self.classes.is_empty() {
+            return (
+                vec![Vec::new(); feature_data.len()],
+                vec![[0; 4]; feature_data.len()],
+            );
+        }
+        if self.classes.len() == 1 {
+            let cls = self.classes[0];
+            let mut dominant = [0i16; 4];
+            if (1..=4).contains(&cls) {
+                dominant[cls as usize - 1] = 0;
+            }
+            return (
+                vec![vec![(cls, 1.0)]; feature_data.len()],
+                vec![dominant; feature_data.len()],
+            );
+        }
+        let n_cols = self
+            .numeric_feature_columns
+            .len()
+            .min(self.numeric_means.len())
+            .min(self.numeric_scales.len())
+            .min(self.baseline_weights.len());
+        let dominant_interaction_limit = std::env::var("DOMINANT_INTERACTION_TOP_K")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(64);
+        let pairs: Vec<(Vec<(i64, f64)>, [i16; 4])> = feature_data
+            .par_iter()
+            .map(|row| {
+                let mut standardized = vec![0.0; n_cols];
+                for col_idx in 0..n_cols {
+                    standardized[col_idx] = scaled_standardize_value(
+                        row.get(col_idx).copied().unwrap_or(f64::NAN),
+                        self.numeric_means[col_idx],
+                        self.numeric_scales[col_idx],
+                        self.numeric_feature_columns.get(col_idx).map(String::as_str),
+                        self.climate_influence_scale,
+                    );
+                }
+                let interaction_values: Vec<f64> = self
+                    .interactions
+                    .iter()
+                    .map(|term| {
+                        interaction_activation_product(
+                            &standardized,
+                            &self.baseline_weights[..n_cols],
+                            &term.feature_indices,
+                            self.activation_gamma,
+                        )
+                    })
+                    .collect();
+
+                let mut logits = Vec::with_capacity(self.classes.len());
+                let mut dominant_by_type = [0i16; 4];
+                for class_idx in 0..self.classes.len() {
+                    let mut logit = self.intercepts.get(class_idx).copied().unwrap_or(0.0);
+                    let mut best_value = 0.0;
+                    let mut best_index = 0i16;
+                    let mut best_priority = 0usize;
+                    if let Some(weights) = self.weights.get(class_idx) {
+                        for col_idx in 0..n_cols {
+                            let contribution = weights.get(col_idx).copied().unwrap_or(0.0)
+                                * standardized[col_idx];
+                            logit += contribution;
+                            let is_climate = self
+                                .numeric_feature_columns
+                                .get(col_idx)
+                                .map(|name| is_climate_feature_name(name))
+                                .unwrap_or(false);
+                            if !is_climate
+                                && contribution > 0.0
+                                && (best_priority < 1
+                                    || (best_priority == 1 && contribution > best_value))
+                            {
+                                best_value = contribution;
+                                best_index = (col_idx + 1) as i16;
+                                best_priority = 1;
+                            }
+                        }
+                        for (term_idx, (&value, term)) in interaction_values
+                            .iter()
+                            .zip(self.interactions.iter())
+                            .enumerate()
+                        {
+                            let contribution =
+                                weights.get(n_cols + term_idx).copied().unwrap_or(0.0) * value;
+                            logit += contribution;
+                            if term_idx < dominant_interaction_limit {
+                                let priority = interaction_dominance_priority(term.order);
+                                if contribution > 0.0
+                                    && priority > 0
+                                    && (priority > best_priority
+                                        || (priority == best_priority && contribution > best_value))
+                                {
+                                    best_value = contribution;
+                                    best_index = (n_cols + term_idx + 1) as i16;
+                                    best_priority = priority;
+                                }
+                            }
+                        }
+                    }
+                    logits.push(logit);
+                    let class_value = self.classes[class_idx];
+                    if (1..=4).contains(&class_value) {
+                        dominant_by_type[class_value as usize - 1] = best_index;
+                    }
+                }
+                let probs = softmax_vec(&logits);
+                (
+                    self.classes.iter().copied().zip(probs).collect::<Vec<_>>(),
+                    dominant_by_type,
+                )
+            })
+            .collect();
+        pairs.into_iter().unzip()
     }
 
     /// Fit the model.
@@ -1380,6 +2358,41 @@ mod tests {
             probs[0] > probs[2],
             "a=high should have higher prob than a=low"
         );
+    }
+
+    #[test]
+    fn test_numeric_interaction_prediction_and_dominant() {
+        let mut engine = OccurrenceProbabilityEngine::new();
+        engine.backend = "numeric_logistic_regression_with_interactions".to_string();
+        engine.numeric_feature_columns = vec!["rainfall_avg_prev_3m".into(), "dist_to_road".into()];
+        engine.numeric_means = vec![0.0, 0.0];
+        engine.numeric_scales = vec![1.0, 1.0];
+        engine.weights = vec![0.1, 0.1];
+        engine.baseline_weights = vec![1.0, -1.0];
+        engine.intercept = -2.0;
+        engine.activation_gamma = 1.5;
+        engine.interactions = vec![NumericInteractionTerm {
+            id: "rainfall_avg_prev_3m*dist_to_road".into(),
+            order: 2,
+            feature_indices: vec![0, 1],
+            feature_names: vec!["rainfall_avg_prev_3m".into(), "dist_to_road".into()],
+            weight: 5.0,
+            support_pos: 0.2,
+            support_neg: 0.05,
+            lift: 4.0,
+            log_lift: 4.0f64.ln(),
+            stability: 1.0,
+            score: 0.2 * 4.0f64.ln(),
+            risk_thresholds: Vec::new(),
+            activation_midpoints: Vec::new(),
+            learned_thresholds: Vec::new(),
+            explanation_text: String::new(),
+        }];
+
+        let rows = vec![vec![2.0, -2.0], vec![-2.0, 2.0]];
+        let (probabilities, dominant) = engine.predict_numeric_rows_with_dominant(&rows);
+        assert!(probabilities[0] > probabilities[1]);
+        assert_eq!(dominant[0], 3);
     }
 
     #[test]

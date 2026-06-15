@@ -16,8 +16,8 @@ def test_production_config_uses_safe_parallel_defaults():
 def test_production_fresh_config_uses_parallel_cache_dir():
     config = load_config("configs/production_fresh.yaml")
 
-    assert config.paths.cache_dir == "cache/chunks"
-    assert config.paths.out_dir == "results/models"
+    assert config.paths.cache_dir == "data/cache/chunks"
+    assert config.paths.out_dir == "data/result/models"
     assert config.pipeline.chunk_size == 1024
     assert config.pipeline.num_workers == 0
     assert config.attribution.run_num_workers == 0
